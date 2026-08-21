@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Deye Energy</title>
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+  <style>
+    html, body { margin: 0; height: 100%; background: #06090f; }
+    body { overflow: hidden; }
+    deye-dashboard { display: block; width: 100%; height: 100%; }
+    #dev-errors {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 999;
+      margin: 0; padding: 10px 14px; max-height: 40%; overflow: auto;
+      background: #2a0d0d; color: #ffb4b4; font: 12px/1.5 ui-monospace, monospace;
+      border-top: 1px solid #ff5c5c;
+    }
+    #dev-errors:empty { display: none; }
+  </style>
+  <script type="module" src="./deye-dashboard.js?v=1.0.2"></script>
+</head>
+<body>
+  <!--
+    Standalone mode: this page is opened directly, not as a Home Assistant panel.
+    It needs a long-lived access token and exists for development and debugging.
+    The normal way to run the dashboard is panel_custom (see INSTALL.md).
+  -->
+  <deye-dashboard standalone></deye-dashboard>
+
+  <pre id="dev-errors" hidden></pre>
+  <script>
+    // Errors are visible immediately — handy both when debugging by hand and
+    // when checking the page automatically.
+    (function () {
+      var box = document.getElementById('dev-errors');
+      var seen = 0;
+      function show(text) {
+        seen++;
+        box.hidden = false;
+        box.textContent += (seen > 1 ? '\n' : '') + text;
+      }
+      window.addEventListener('error', function (e) {
+        show('[error] ' + (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        show('[promise] ' + (r && r.message ? r.message : String(r)));
+      });
+
+        // ?diag=1 — layout measurements (hunting horizontal overflow)
+      if (new URLSearchParams(location.search).get('diag') === '1') {
+        setTimeout(function () {
+          var host = document.querySelector('deye-dashboard');
+          var sr = host.shadowRoot;
+          var q = function (sel) { return sr.querySelector(sel); };
+          var out = ['viewport=' + innerWidth + 'x' + innerHeight,
+                     'doc.scrollWidth=' + document.documentElement.scrollWidth,
+                     'host.scrollWidth=' + host.scrollWidth + ' clientWidth=' + host.clientWidth];
+          [['.app', 1], ['.topbar', 1], ['.notices', 1], ['.grid', 1], ['.card-flow', 1],
+           ['.flow-stage', 1], ['.flow-node', 1], ['.node-inverter', 1], ['.kpi-row', 1],
+           ['.card-chart', 1], ['.chart-canvas', 1], ['.detail-row', 1], ['.card-battery', 1]].forEach(function (p) {
+            var el = q(p[0]);
+            out.push(p[0] + ': off=' + (el ? el.offsetWidth : '-') + ' scroll=' + (el ? el.scrollWidth : '-')
+              + ' layout=' + (el && el.dataset ? (el.dataset.layout || '') : ''));
+          });
+          var g = q('.grid');
+          if (g) Array.prototype.forEach.call(g.children, function (c) {
+            out.push('  child ' + c.className.split(' ').slice(-1) + ' off=' + c.offsetWidth + ' scroll=' + c.scrollWidth);
+          });
+          box.hidden = false;
+          box.textContent = out.join('\n');
+        }, 400);
+      }
+    })();
+  </script>
+</body>
+</html>

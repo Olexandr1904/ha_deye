@@ -1,0 +1,91 @@
+/* responsive.css — layout across screen sizes.
+   Mobile order: flow -> KPI -> battery/grid/load -> charts. */
+
+/* ── wide desktop: a little more breathing room ── */
+@media (min-width: 1800px) {
+  :host { --gap: 18px; --pad: 22px; font-size: 15px; }
+  .flow-stage { max-height: 66vh; }
+}
+
+/* ── large screens: the diagram may take more height ── */
+@media (min-width: 1800px) and (min-height: 1000px) {
+  .flow-stage { --flow-max-h: 66vh; }
+}
+
+/* ── tablet: single column ── */
+@media (max-width: 1099px) {
+  :host { --gap: 12px; --pad: 16px; }
+  .card-flow { grid-column: 1 / -1; grid-row: auto; }
+  .card-battery, .card-grid { grid-column: 1 / -1; grid-row: auto; }
+  .kpi-row, .card-chart, .detail-row { grid-column: 1 / -1; grid-row: auto; }
+  .flow-stage { max-height: none; }
+  .batt-main { gap: 22px; }
+  .batt-visual { width: 76px; }
+}
+
+/* ── narrow tablet / large phone ── */
+@media (max-width: 780px) {
+  .kpi-row { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+  .detail-row { grid-template-columns: 1fr; }
+  .last-update { display: none; }
+}
+
+/* ── phone ── */
+@media (max-width: 620px) {
+  :host { --gap: 10px; --pad: 14px; --radius: 17px; font-size: 13.5px; }
+  .app { padding: 8px 8px 22px; }
+
+  .topbar { padding: 7px 9px; gap: 8px; }
+  .brand-title-main { font-size: 13px; letter-spacing: .07em; }
+  .brand-sub { display: none; }
+  .status-chip { padding: 5px 9px; font-size: 10px; }
+  .status-chip .status-text { display: none; }
+  .status-chip .dot { width: 8px; height: 8px; }
+
+  /* mobile order: flow -> KPI -> battery/grid -> detail cards -> charts */
+  .card-flow { order: 1; }
+  .kpi-row { order: 2; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card-battery { order: 3; }
+  .card-grid { order: 4; }
+  .detail-row { order: 5; }
+  .card-chart { order: 6; }
+
+  .flow-label { font-size: 10.5px; padding: 2.5px 7px; gap: 4px; }
+  .flow-footer { margin-top: 10px; padding-top: 10px; }
+  .alloc-list { gap: 5px; }
+  .alloc-chip { font-size: 10.5px; padding: 3px 7px; }
+
+  .batt-main { gap: 14px; }
+  .batt-visual { width: 46px; }
+  .big-num { font-size: 32px; }
+
+  .chart-legend { gap: 5px; }
+  .chart-legend-item { padding: 4px 8px; font-size: 11px; }
+
+  .card-head { margin-bottom: 11px; }
+  .card-actions { gap: 7px; }
+  .range-btn { padding: 5px 9px; font-size: 11px; }
+
+  .field { grid-template-columns: 1fr; gap: 5px; }
+  .modal-panel { max-height: 94vh; }
+  .modal-body { padding: 13px; }
+}
+
+/* ── very narrow ── */
+@media (max-width: 400px) {
+  .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .range-switch { gap: 0; }
+  .range-btn { padding: 5px 7px; font-size: 10.5px; }
+}
+
+/* ── short viewport (phone in landscape) ── */
+@media (max-height: 560px) and (min-width: 700px) {
+  .flow-stage { max-height: 78vh; }
+}
+
+/* ── print: basic readability ── */
+@media print {
+  :host { background: #fff; color: #111; }
+  .card { border-color: #ddd; box-shadow: none; background: #fff; }
+  .topbar, .icon-btn, .range-switch { display: none; }
+}

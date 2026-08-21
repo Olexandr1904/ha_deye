@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Node
+node_modules/
+
+# Local secrets: SMB passwords, Home Assistant tokens
+secret/
+*.token
+.smb
