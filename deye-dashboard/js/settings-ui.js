@@ -296,8 +296,17 @@ export class SettingsUI {
         field(t('settings.phasesBlock'),
           sel(d.showPhases, [['auto', t('settings.phasesAuto')], ['always', t('settings.phasesAlways')], ['never', t('settings.phasesNever')]], (v) => { d.showPhases = v; })),
         field(t('settings.defaultRange'),
-          sel(d.chart.defaultRange, [['today', t('chart.rangeToday')], ['7d', t('chart.range7d')], ['30d', t('chart.range30d')]], (v) => { d.chart.defaultRange = v; })),
-        field('', toggle(d.animations, (v) => { d.animations = v; }, t('settings.animations'))),
+          sel(d.chart.defaultRange, [
+            ['day', t('range.day')], ['week', t('range.week')],
+            ['month', t('range.month')], ['year', t('range.year')],
+            ['custom', t('range.custom')],
+          ], (v) => { d.chart.defaultRange = v; })),
+        field(t('settings.animations'),
+          sel(d.animations, [
+            ['auto', t('settings.animationsAuto')],
+            ['on', t('settings.animationsOn')],
+            ['off', t('settings.animationsOff')],
+          ], (v) => { d.animations = v; })),
         field('', toggle(d.debug, (v) => { d.debug = v; }, t('settings.debug'))),
         this.onDemoToggle ? field('', h('button', {
           class: 'btn btn-ghost', type: 'button', text: t('settings.demoMode'),

@@ -169,6 +169,12 @@ export class EnergyModel {
     const importP = g('gridImportPower');
     const exportP = g('gridExportPower');
 
+    /* ── Generator ── */
+    const generatorPower = g('generatorPower');
+    const generatorToday = g('generatorToday');
+    const generatorRelevant = (isNum(generatorPower) && generatorPower > 0.015)
+      || (isNum(generatorToday) && generatorToday > 0.01);
+
     /* ── Load ── */
     // 'inverted' is for sensors that report consumption as a negative number.
     // Taking abs() unconditionally (as an earlier version did) made the setting
@@ -180,7 +186,14 @@ export class EnergyModel {
     }
 
     /* ── learn the polarity ── */
-    this._learn({ values, soc, batteryRaw, gridRaw, pvPower, load, statusText });
+    // The generator is passed separately: coercing a missing PV reading to zero
+    // here would let the balance vote run as if the array produced nothing,
+    // which is routine when the inverter drops off the Modbus bus — and the
+    // learned sign is persisted.
+    this._learn({
+      values, soc, batteryRaw, gridRaw, load, statusText, pvPower,
+      generatorPower: generatorRelevant && isNum(generatorPower) ? generatorPower : null,
+    });
 
     /* ── apply the polarity ── */
     let batteryPower = null; // + = charging
@@ -248,6 +261,18 @@ export class EnergyModel {
         today: g('loadToday'),
         total: g('loadTotal'),
       },
+      generator: {
+        power: generatorPower,
+        today: g('generatorToday'),
+        total: g('generatorTotal'),
+        voltage: g('generatorVoltage'),
+        status: txt('generatorStatus'),
+        running: isNum(generatorPower) && generatorPower > 0.015,
+        // "Relevant" drives the diagram and the card: once the generator has run
+        // today the daily counter keeps it visible until midnight, so the layout
+        // changes shape at most once a day.
+        relevant: generatorRelevant,
+      },
       inverter: {
         power: inverterPower,
         temperature: g('inverterTemperature'),
@@ -284,15 +309,20 @@ export class EnergyModel {
       else state.battery.timeToEmpty = (capacity * soc / 100) / -batteryPower;
     }
 
-    const dcIn = (isNum(pvPower) ? pvPower : 0) + (isNum(batteryPower) && batteryPower < 0 ? -batteryPower : 0);
+    const dcIn = (isNum(pvPower) ? pvPower : 0)
+      + (generatorRelevant && isNum(generatorPower) ? generatorPower : 0)
+      + (isNum(batteryPower) && batteryPower < 0 ? -batteryPower : 0);
     if (isNum(inverterPower) && dcIn > 0.3 && inverterPower > 0.1) {
       const eff = (inverterPower / dcIn) * 100;
       if (eff > 50 && eff <= 100) state.inverter.efficiency = eff;
     }
 
     // Balance residual — an indicator of data quality or a wrong sign.
+    // The generator is a source like PV: leaving it out would raise a false
+    // "balance is off" warning whenever it runs.
     if (isNum(pvPower) && isNum(load) && isNum(gridPower) && isNum(batteryPower)) {
-      state.meta.balance = pvPower + gridPower - load - batteryPower;
+      const genIn = generatorRelevant && isNum(generatorPower) ? generatorPower : 0;
+      state.meta.balance = pvPower + genIn + gridPower - load - batteryPower;
     }
 
     state.inverter.state = this._inverterState(values, state);
@@ -302,7 +332,7 @@ export class EnergyModel {
     // The peak decays slowly and ignores absurd readings, so one glitched sample
     // cannot pin every flow at the slowest animation speed for the whole session.
     const PLAUSIBLE_KW = 150;
-    const observed = [pvPower || 0, Math.abs(batteryPower || 0), Math.abs(gridPower || 0), load || 0]
+    const observed = [pvPower || 0, generatorPower || 0, Math.abs(batteryPower || 0), Math.abs(gridPower || 0), load || 0]
       .filter((v) => v <= PLAUSIBLE_KW);
     this._peakPv = Math.max(this._peakPv * 0.999, ...observed);
     state.meta.scaleKw = ratedPowerKw || Math.max(1, this._peakPv);
@@ -320,7 +350,7 @@ export class EnergyModel {
     return mode === 'auto' ? this.gridLearner.value : mode;
   }
 
-  _learn({ values, soc, batteryRaw, gridRaw, pvPower, load, statusText }) {
+  _learn({ values, soc, batteryRaw, gridRaw, pvPower, generatorPower, load, statusText }) {
     let dirty = false;
 
     // 1. Battery status text — direct evidence.
@@ -352,10 +382,12 @@ export class EnergyModel {
     dirty = this._counterVote(values, 'batteryChargeToday', batteryRaw, this.batteryLearner, 'charge_positive', 'discharge_positive') || dirty;
     dirty = this._counterVote(values, 'batteryDischargeToday', batteryRaw, this.batteryLearner, 'discharge_positive', 'charge_positive') || dirty;
 
-    // 4. Fallback signal — the power balance.
-    if (isNum(pvPower) && isNum(load) && isNum(gridRaw) && isNum(batteryRaw) &&
+    // 4. Fallback signal — the power balance. A running generator has to be part
+    //    of the input, otherwise the residual would favour the wrong sign.
+    const sourcePower = isNum(pvPower) ? pvPower + (isNum(generatorPower) ? generatorPower : 0) : null;
+    if (isNum(sourcePower) && isNum(load) && isNum(gridRaw) && isNum(batteryRaw) &&
         (Math.abs(gridRaw) > 0.2 || Math.abs(batteryRaw) > 0.2)) {
-      const resid = (bat, grid) => Math.abs(pvPower + grid - load - bat);
+      const resid = (bat, grid) => Math.abs(sourcePower + grid - load - bat);
       // battery
       this.batteryLearner.observeBalance(
         resid(batteryRaw, this.gridSign === 'import_positive' ? gridRaw : -gridRaw),

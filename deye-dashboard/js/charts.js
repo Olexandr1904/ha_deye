@@ -11,7 +11,7 @@
  * and redraw driven by a ResizeObserver.
  */
 
-import { h, s, niceTicks, monotonePath, clamp, fmtClock, fmtDayShort, formatPower, formatEnergy, prefersReducedMotion } from './utils.js';
+import { h, s, niceTicks, monotonePath, clamp, fmtClock, fmtDayShort, fmtMonthShort, formatPower, formatEnergy, prefersReducedMotion } from './utils.js';
 import { t } from './i18n.js';
 
 const PAD = { top: 18, right: 14, bottom: 26, left: 46 };
@@ -29,14 +29,22 @@ class BaseChart {
     this.svgWrap = h('div', { class: 'chart-canvas' });
     this.legendEl = h('div', { class: 'chart-legend' });
     this.tooltip = h('div', { class: 'chart-tooltip', role: 'status' });
-    this.emptyEl = h('div', { class: 'chart-empty', text: t('chart.noData') });
+    this.emptyEl = h('div', { class: 'chart-empty' },
+      h('span', { class: 'chart-empty-text', text: t('chart.noData') }),
+      h('small', { class: 'chart-empty-hint', hidden: true }));
     this.host.append(this.svgWrap, this.legendEl, this.tooltip, this.emptyEl);
     // Defer the redraw to the next frame: resizing inside an observer callback
     // is not allowed (see renderer.observeFlowResize).
     this._ro = new ResizeObserver(() => {
       if (this._roPending) return;
       this._roPending = true;
-      requestAnimationFrame(() => { this._roPending = false; this._onResize(); });
+      const run = () => {
+        if (!this._roPending) return;
+        this._roPending = false;
+        this._onResize();
+      };
+      requestAnimationFrame(run);
+      setTimeout(run, 120);
     });
     this._ro.observe(this.svgWrap);
   }
@@ -78,6 +86,17 @@ class BaseChart {
         h('span', { class: 'chart-legend-value', text: sr.summary || '' }));
       this.legendEl.appendChild(btn);
     }
+  }
+
+  /**
+   * The three reasons a period can be empty need three different remedies, so
+   * the caller names the reason instead of the chart guessing.
+   */
+  setEmptyText(text, hint = '') {
+    const textEl = this.emptyEl.querySelector('.chart-empty-text');
+    const hintEl = this.emptyEl.querySelector('.chart-empty-hint');
+    if (textEl) textEl.textContent = text || t('chart.noData');
+    if (hintEl) { hintEl.textContent = hint || ''; hintEl.hidden = !hint; }
   }
 
   _emptyState(isEmpty) {
@@ -125,7 +144,10 @@ export class TimeSeriesChart extends BaseChart {
     if (!vis.length) return;
 
     let min = 0, max = 0;
-    for (const sr of vis) for (const [, v] of sr.points) { if (v < min) min = v; if (v > max) max = v; }
+    for (const sr of vis) {
+      for (const [, v] of sr.points) { if (v < min) min = v; if (v > max) max = v; }
+      for (const [, lo, hi] of sr.band || []) { if (lo < min) min = lo; if (hi > max) max = hi; }
+    }
     if (max === min) max = min + 1;
     const yScaleInfo = niceTicks(min, max, 4);
     const y0 = yScaleInfo.min, y1 = yScaleInfo.max;
@@ -155,7 +177,7 @@ export class TimeSeriesChart extends BaseChart {
       const x = xOf(tick);
       if (x < PAD.left - 1 || x > W - PAD.right + 1) continue;
       gX.appendChild(s('line', { x1: x, x2: x, y1: PAD.top, y2: PAD.top + plotH, class: 'grid-line grid-vertical' }));
-      gX.appendChild(s('text', { x, y: H - 8, class: 'axis-label', 'text-anchor': 'middle', text: fmtClock(new Date(tick), false) }));
+      gX.appendChild(s('text', { x, y: H - 8, class: 'axis-label', 'text-anchor': 'middle', text: axisTimeLabel(new Date(tick), this.to - this.from) }));
     }
     svg.appendChild(gX);
 
@@ -163,6 +185,15 @@ export class TimeSeriesChart extends BaseChart {
     for (const sr of vis) {
       const pts = sr.points.map(([t, v]) => [xOf(t), yOf(v)]);
       const d = monotonePath(pts);
+
+      // A min-max band: the same smoothing along the top edge, then back along
+      // the bottom one. Drawn first so the mean line stays readable on top.
+      if (sr.band && sr.band.length > 1) {
+        const top = sr.band.map(([t, , hi]) => [xOf(t), yOf(hi)]);
+        const bottom = sr.band.map(([t, lo]) => [xOf(t), yOf(lo)]).reverse();
+        const bandPath = `${monotonePath(top)}L${monotonePath(bottom).slice(1)}Z`;
+        svg.appendChild(s('path', { d: bandPath, class: 'chart-band', fill: sr.color, 'fill-opacity': 0.16, stroke: 'none' }));
+      }
       if (sr.area) {
         const gradId = `g-${sr.key}-${Math.round(W)}`;
         const grad = s('linearGradient', { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 });
@@ -203,10 +234,19 @@ export class TimeSeriesChart extends BaseChart {
         dots[i].style.display = '';
         dots[i].setAttribute('cx', xOf(p[0]));
         dots[i].setAttribute('cy', yOf(p[1]));
-        const f = formatPower(p[1], { signed: sr.signed });
-        rows.push(`<div class="tt-row"><span class="tt-dot" style="background:${sr.color}"></span><span class="tt-label">${sr.label}</span><span class="tt-value">${f.value} <i>${f.unit}</i></span></div>`);
+        const f = sr.format ? sr.format(p[1]) : formatPower(p[1], { signed: sr.signed });
+        let extra = '';
+        if (sr.band) {
+          const b = sr.band[sr.points.indexOf(p)];
+          if (b) {
+            const lo = sr.format ? sr.format(b[1]) : formatPower(b[1]);
+            const hi = sr.format ? sr.format(b[2]) : formatPower(b[2]);
+            extra = ` <i>(${lo.value}–${hi.value})</i>`;
+          }
+        }
+        rows.push(`<div class="tt-row"><span class="tt-dot" style="background:${sr.color}"></span><span class="tt-label">${sr.label}</span><span class="tt-value">${f.value} <i>${f.unit}</i>${extra}</span></div>`);
       });
-      const time = fmtClock(new Date(clamp(t, this.from, this.to)), false);
+      const time = tooltipTimeLabel(new Date(clamp(t, this.from, this.to)), this.to - this.from);
       this._showTooltip(px * (rect.width / W), PAD.top + 6, `<div class="tt-title">${time}</div>${rows.join('')}`);
     };
     overlay.addEventListener('pointermove', onMove);
@@ -243,7 +283,8 @@ export class DailyBarChart extends BaseChart {
     if (!vis.length) return;
 
     // Shared day scale
-    const dayKeys = [...new Set(vis.flatMap((sr) => sr.points.map(([t]) => dayKey(t))))].sort();
+    const bucket = this.opts.bucket || 'day';
+    const dayKeys = [...new Set(vis.flatMap((sr) => sr.points.map(([t]) => dayKey(t, bucket))))].sort((a, b) => a - b);
     let max = 0;
     for (const sr of vis) for (const [, v] of sr.points) if (v > max) max = v;
     const yInfo = niceTicks(0, max || 1, 4);
@@ -271,7 +312,7 @@ export class DailyBarChart extends BaseChart {
       const cx = PAD.left + slot * (i + 0.5);
       const groupW = barW * vis.length + barGap * (vis.length - 1);
       vis.forEach((sr, si) => {
-        const found = sr.points.find(([t]) => dayKey(t) === key);
+        const found = sr.points.find(([t]) => dayKey(t, bucket) === key);
         const v = found ? found[1] : 0;
         const y = yOf(v);
         const x = cx - groupW / 2 + si * (barW + barGap);
@@ -284,19 +325,23 @@ export class DailyBarChart extends BaseChart {
         }
       });
       if (i % labelEvery === 0) {
-        svg.appendChild(s('text', { x: cx, y: H - 8, class: 'axis-label', 'text-anchor': 'middle', text: fmtDayShort(new Date(+key)) }));
+        const d = new Date(+key);
+        const text = this.opts.bucket === 'month' ? fmtMonthShort(d) : fmtDayShort(d);
+        svg.appendChild(s('text', { x: cx, y: H - 8, class: 'axis-label', 'text-anchor': 'middle', text }));
       }
       // hover zone covering the whole column
       const hit = s('rect', { x: PAD.left + slot * i, y: PAD.top, width: slot, height: plotH, fill: 'transparent', style: 'cursor:pointer' });
       hit.addEventListener('pointerenter', (evt) => {
         const rect = svg.getBoundingClientRect();
         const rows = vis.map((sr) => {
-          const found = sr.points.find(([t]) => dayKey(t) === key);
+          const found = sr.points.find(([t]) => dayKey(t, bucket) === key);
           const f = formatEnergy(found ? found[1] : 0);
           return `<div class="tt-row"><span class="tt-dot" style="background:${sr.color}"></span><span class="tt-label">${sr.label}</span><span class="tt-value">${f.value} <i>${f.unit}</i></span></div>`;
         });
         const px = (PAD.left + slot * (i + 0.5)) * (rect.width / W);
-        this._showTooltip(px, PAD.top + 6, `<div class="tt-title">${fmtDayShort(new Date(+key))}</div>${rows.join('')}`);
+        const d = new Date(+key);
+        const title = this.opts.bucket === 'month' ? fmtMonthShort(d) : fmtDayShort(d);
+        this._showTooltip(px, PAD.top + 6, `<div class="tt-title">${title}</div>${rows.join('')}`);
       });
       hit.addEventListener('pointerleave', () => this._hideTooltip());
       svg.appendChild(hit);
@@ -308,9 +353,10 @@ export class DailyBarChart extends BaseChart {
 
 /* ───────────────────────── helpers ───────────────────────── */
 
-function dayKey(t) {
+function dayKey(t, bucket) {
   const d = new Date(t);
   d.setHours(0, 0, 0, 0);
+  if (bucket === 'month') d.setDate(1);
   return String(+d);
 }
 
@@ -333,6 +379,8 @@ function nearestPoint(points, t) {
   return Math.abs(a[0] - t) <= Math.abs(b[0] - t) ? a : b;
 }
 
+const DAY_MS = 86400000;
+
 function timeTicks(from, to, count) {
   const span = to - from;
   // Small steps matter for short ranges (for example right after midnight).
@@ -340,7 +388,29 @@ function timeTicks(from, to, count) {
   const target = span / Math.max(1, count);
   const step = steps.find((x) => x >= target) || steps[steps.length - 1];
   const ticks = [];
+  if (step >= DAY_MS) {
+    // Beyond a day, step in local calendar days: a fixed millisecond grid lands
+    // on UTC midnight and would label every tick with the timezone offset.
+    const days = Math.max(1, Math.round(step / DAY_MS));
+    const d = new Date(from);
+    d.setHours(0, 0, 0, 0);
+    if (+d < from) d.setDate(d.getDate() + days);
+    for (; +d <= to; d.setDate(d.getDate() + days)) ticks.push(+d);
+    return ticks;
+  }
   const first = Math.ceil(from / step) * step;
   for (let t = first; t <= to; t += step) ticks.push(t);
   return ticks;
+}
+
+/** A clock reads well inside a day and is useless across a month. */
+function axisTimeLabel(date, span) {
+  if (span > 60 * DAY_MS) return fmtMonthShort(date);
+  if (span > 2 * DAY_MS) return fmtDayShort(date);
+  return fmtClock(date, false);
+}
+
+function tooltipTimeLabel(date, span) {
+  if (span > 2 * DAY_MS) return `${fmtDayShort(date)}, ${fmtClock(date, false)}`;
+  return fmtClock(date, false);
 }

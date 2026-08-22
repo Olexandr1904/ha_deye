@@ -46,6 +46,14 @@ export const ICONS = {
 
   download: (o) => wrap(`<path d="M12 3.5v11.5"/><path d="M7.6 10.6 12 15l4.4-4.4"/><path d="M4 19.5h16"/>`, o),
 
+  chevronLeft: (o) => wrap(`<path d="M14.5 5 8 12l6.5 7"/>`, o),
+
+  chevronRight: (o) => wrap(`<path d="M9.5 5 16 12l-6.5 7"/>`, o),
+
+  calendar: (o) => wrap(`<rect x="3.2" y="5" width="17.6" height="16" rx="2.6"/><path d="M3.2 10h17.6M8 2.8v3.6M16 2.8v3.6"/>`, o),
+
+  generator: (o) => wrap(`<rect x="2.6" y="8" width="18.8" height="11" rx="2.4"/><path d="M6.2 8V5.6a2 2 0 0 1 2-2h7.6a2 2 0 0 1 2 2V8"/><path d="M7.5 13.5h4M12.5 11.2l-1.6 5"/><path d="M16 21v1.2M8 21v1.2"/>`, o),
+
   eye: (o) => wrap(`<path d="M2.2 12S5.6 5.6 12 5.6 21.8 12 21.8 12 18.4 18.4 12 18.4 2.2 12 2.2 12z"/><circle cx="12" cy="12" r="3"/>`, o),
 };
 

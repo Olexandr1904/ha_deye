@@ -3,6 +3,7 @@
  * A real browser: device emulation, clicks, shadow DOM reads, console capture.
  */
 import { Browser, sleep } from './cdp.mjs';
+import { toDateInput } from '../deye-dashboard/js/ranges.js';
 import { mkdirSync } from 'node:fs';
 
 const ORIGIN = process.env.DEYE_ORIGIN || 'http://127.0.0.1:8899';
@@ -38,11 +39,14 @@ const HELPERS = `
 
 /** Waits for a condition inside the page (DOM updates land in an animation frame). */
 async function poll(page, expr, ms = 4000) {
+  // Deliberately setTimeout and not requestAnimationFrame: after a device-metrics
+  // change the page can stop producing frames, and an rAF-based wait would then
+  // never resolve, hanging the whole run.
   return page.eval(`${HELPERS}
     const t0 = Date.now();
     while (Date.now() - t0 < ${ms}) {
       try { if (${expr}) return true; } catch (e) {}
-      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 30)));
+      await new Promise(r => setTimeout(r, 50));
     }
     return false;`);
 }
@@ -72,7 +76,7 @@ try {
   check('no exceptions and no console.error', page.errors.length === 0, page.errors.join(' | ') || 'clean');
   check('no failed requests', page.failedRequests.length === 0, page.failedRequests.join(' | ') || 'clean');
   const booted = await page.eval(`${HELPERS} return { app: !!app, cards: qa('.card').length, nodes: qa('.flow-node').length, links: qa('.flow-link').length };`);
-  check('application booted', booted.app && booted.cards >= 6 && booted.nodes === 5 && booted.links === 4, JSON.stringify(booted));
+  check('application booted', booted.app && booted.cards === 8 && booted.nodes === 6 && booted.links === 5, JSON.stringify(booted));
 
   const values = await page.eval(`${HELPERS} return {
     solar: txt('.node-solar .node-num'), house: txt('.node-house .node-num'),
@@ -80,9 +84,30 @@ try {
     inv: txt('.inv-power-num'), status: txt('.inv-status-text'),
     battCard: txt('.card-battery .big-num'), mode: txt('.batt-mode'),
     kpi: qa('.kpi:not([hidden]) .kpi-num').map(e=>e.textContent.trim()),
+    socEntity: (() => {
+      const st = app.client.getState(app.config.entities.batterySoc);
+      return st ? String(Math.round(parseFloat(st.state) * 10) / 10) : null;
+    })(),
   };`);
   check('values rendered', values.solar !== '—' && values.status === 'ONLINE', JSON.stringify(values).slice(0, 190));
   check('SOC matches in the node and the card', values.battery === values.battCard, `${values.battery} / ${values.battCard}`);
+  check('the first paint already agrees with the entity state',
+    values.battery === values.socEntity, `node ${values.battery} vs entity ${values.socEntity}`);
+
+  // The generator produced nothing by 13:30, so nothing about it may be on screen.
+  const genOff = await page.eval(`${HELPERS} return {
+    relevant: app.state.generator.relevant,
+    node: !!q('.node-generator') && !q('.node-generator').hidden,
+    link: getComputedStyle(q('.link-generator')).display !== 'none',
+    card: !!q('.card-generator') && q('.card-generator').offsetParent !== null,
+    kpi: !q('.kpi[data-key="generator"]').hidden,
+    layout: q('.flow-stage').dataset.layout,
+    chart: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()).some(x => /Generator/.test(x)),
+  };`);
+  check('an idle generator is nowhere to be seen',
+    genOff.relevant === false && !genOff.node && !genOff.link && !genOff.card && !genOff.kpi
+      && genOff.layout === 'wide' && !genOff.chart,
+    JSON.stringify(genOff));
 
   /* ─────────────── 2. link geometry ─────────────── */
   group('Diagram geometry: links meet the nodes');
@@ -113,8 +138,9 @@ try {
       return { dir: g.dataset.dir, name: cs.animationName, dur: cs.animationDuration, rev: cs.animationDirection, op: +parseFloat(cs.opacity).toFixed(2) }; };
     return { solar: info('solar'), battery: info('battery'), grid: info('grid'), load: info('load') };`);
   check('an active flow animates', anim.solar.name === 'bead-run' && parseFloat(anim.solar.dur) > 0.4, `solar ${anim.solar.dir} ${anim.solar.dur}`);
-  check('a flow out of the inverter runs in reverse', anim.battery.dir !== 'toHub' ? anim.battery.rev === 'reverse' : true, `battery dir=${anim.battery.dir} ${anim.battery.rev}`);
-  check('intensity drives the speed', parseFloat(anim.solar.dur) < parseFloat(anim.load.dur) || anim.load.dir === 'idle',
+  check('a flow out of the inverter runs in reverse',
+    anim.battery.dir === 'fromHub' && anim.battery.rev === 'reverse', `battery dir=${anim.battery.dir} ${anim.battery.rev}`);
+  check('intensity drives the speed', parseFloat(anim.solar.dur) < parseFloat(anim.load.dur),
     `solar ${anim.solar.dur} (7.8 kW) vs load ${anim.load.dur}`);
 
   await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
@@ -123,8 +149,8 @@ try {
   check('prefers-reduced-motion disables the animation', parseFloat(reduced) < 0.01, `duration ${reduced}`);
   await page.send('Emulation.setEmulatedMedia', { features: [] });
 
-  /* ─────────────── 4. chart range switching ─────────────── */
-  group('Charts: Today / 7 Days / 30 Days');
+  /* ─────────────── 4. chart periods ─────────────── */
+  group('Chart periods: Day / Week / Month / Year');
   const chartStats = async () => page.eval(`${HELPERS} return {
     title: txt('.card-chart .card-title-text'),
     lines: qa('.card-chart path.chart-line').length,
@@ -132,25 +158,37 @@ try {
     legend: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
     empty: q('.card-chart .chart-empty').classList.contains('is-visible'),
     yUnit: txt('.card-chart .axis-unit'),
+    label: txt('.card-chart .nav-label-text'),
+    active: q('.card-chart .range-btn.is-active').dataset.range,
+    forwardBlocked: q('.card-chart .nav-btn[disabled]') !== null,
   };`);
+  const pickRange = async (key, wait = 900) => {
+    await page.eval(`${HELPERS} q('.card-chart [data-range="${key}"]').click(); return 1;`);
+    await sleep(wait);
+  };
+
   let cs = await chartStats();
-  check('Today: lines drawn', cs.lines >= 3 && !cs.empty, `lines ${cs.lines}, unit ${cs.yUnit}, legend ${cs.legend.length}`);
+  check('Day: lines drawn', cs.lines >= 3 && !cs.empty && cs.active === 'day',
+    `lines ${cs.lines}, unit ${cs.yUnit}, "${cs.title}", ${cs.label}`);
+  check('forward navigation blocked on today', cs.forwardBlocked === true);
 
-  await page.eval(`${HELPERS} qa('.range-btn').find(b => b.textContent.includes('7 Days')).click();`);
-  await sleep(900);
+  await pickRange('week');
   cs = await chartStats();
-  check('7 Days: bars drawn', cs.bars >= 14 && !cs.empty, `bars ${cs.bars}, "${cs.title}", unit ${cs.yUnit}`);
+  check('Week: daily bars', cs.bars > 0 && !cs.empty && cs.active === 'week',
+    `bars ${cs.bars}, "${cs.title}", ${cs.label}`);
 
-  await page.eval(`${HELPERS} qa('.range-btn').find(b => b.textContent.includes('30 Days')).click();`);
-  await sleep(1100);
+  await pickRange('month', 1100);
   cs = await chartStats();
-  check('30 Days: bars drawn', cs.bars >= 60, `bars ${cs.bars}, "${cs.title}"`);
-  check('legend shows period totals', cs.legend.some((l) => /kWh|MWh/.test(l)), cs.legend.join(' · ').slice(0, 120));
+  check('Month: daily bars', cs.bars > 0 && cs.active === 'month', `bars ${cs.bars}, ${cs.label}`);
 
-  await page.eval(`${HELPERS} qa('.range-btn').find(b => b.textContent.includes('Today')).click();`);
-  await sleep(900);
+  await pickRange('year', 1400);
   cs = await chartStats();
-  check('switching back to Today works', cs.lines >= 3, `lines ${cs.lines}`);
+  check('Year: monthly bars', cs.bars > 0 && cs.active === 'year', `bars ${cs.bars}, ${cs.label}`);
+  check('legend shows period totals', cs.legend.some((l) => /kWh|MWh/.test(l)), cs.legend.join(' / ').slice(0, 120));
+
+  await pickRange('day');
+  cs = await chartStats();
+  check('switching back to Day works', cs.lines >= 3, `lines ${cs.lines}`);
 
   /* ─────────────── 5. chart tooltip ─────────────── */
   group('Chart interaction');
@@ -178,6 +216,113 @@ try {
     return { before, after, restored: qa('.card-chart path.chart-line').length };`);
   check('legend toggles a series off and on', legendToggle.after === legendToggle.before - 1 && legendToggle.restored === legendToggle.before,
     `${legendToggle.before} → ${legendToggle.after} → ${legendToggle.restored}`);
+
+  /* ─────────────── 5b. date navigation and history mode ─────────────── */
+  group('Date navigation and historical mode');
+  const navState = async () => page.eval(`${HELPERS} return {
+    label: txt('.card-chart .nav-label-text'),
+    mode: q('.app').dataset.mode,
+    banner: !q('.history-bar').hidden,
+    bannerText: txt('.history-label'),
+    flowVisible: getComputedStyle(q('.card-flow')).display !== 'none',
+    detailsVisible: getComputedStyle(q('.detail-row')).display !== 'none',
+    liveCards: qa('.card-flow, .card-battery, .card-grid, .card-solar, .card-generator, .card-phases, .card-inverter')
+      .filter(e => e.offsetParent !== null).map(e => e.className.replace(/card |tone-\S+/g, '').trim()),
+    emptyText: txt('.card-chart .chart-empty'),
+    kpi: qa('.kpi:not([hidden]) .kpi-num').map(e => e.textContent.trim()),
+    nowVisible: !q('.nav-now').hidden,
+    forwardBlocked: q('.card-chart .nav-btn[disabled]') !== null,
+  };`);
+  const live = await navState();
+  check('today is live: diagram and cards visible', live.mode === 'live' && live.flowVisible && live.detailsVisible && !live.banner,
+    `mode=${live.mode}, ${live.label}`);
+
+  await page.eval(`${HELPERS} qa('.card-chart .nav-btn')[0].click(); return 1;`);
+  await poll(page, `q('.app').dataset.mode === 'history'`, 8000);
+  const past = await navState();
+  check('one day back enters historical mode', past.mode === 'history' && past.banner,
+    `mode=${past.mode}, banner "${past.bannerText}"`);
+  check('every live card is hidden in history', !past.flowVisible && !past.detailsVisible && past.liveCards.length === 0,
+    past.liveCards.length ? `still visible: ${past.liveCards.join(', ')}` : 'none visible');
+  check('KPI recomputed for the past day',
+    past.kpi.length >= 4 && past.label !== live.label
+      && JSON.stringify(past.kpi) !== JSON.stringify(live.kpi) && !past.kpi.includes('—'),
+    `${past.label}: ${past.kpi.join(' / ')}`);
+  check('forward navigation unblocked in the past', past.forwardBlocked === false);
+  check('Now button appears', past.nowVisible === true);
+  await page.screenshot(`${SHOT}-history.png`);
+
+  await page.eval(`${HELPERS} q('.history-now').click(); return 1;`);
+  await poll(page, `q('.app').dataset.mode === 'live'`, 8000);
+  const back = await navState();
+  check('Now returns to live', back.mode === 'live' && !back.banner && back.flowVisible, back.label);
+
+  await page.eval(`${HELPERS} q('.card-chart [data-range="custom"]').click(); return 1;`);
+  await sleep(900);
+  await page.eval(`${HELPERS}
+    const input = qa('.card-chart .nav-range-input')[0];
+    input.value = '2026-08-01';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return 1;`);
+  await poll(page, `qa('.card-chart .nav-range-input')[0].value === '2026-08-01' && qa('.card-chart rect.chart-bar').length > 0`, 8000);
+  const custom = await page.eval(`${HELPERS}
+    const inputs = qa('.card-chart .nav-range-input');
+    return {
+      count: inputs.length, from: inputs[0].value, to: inputs[1].value,
+      bars: qa('.card-chart rect.chart-bar').length,
+      lines: qa('.card-chart path.chart-line').length,
+      mode: q('.app').dataset.mode,
+      max: q('.card-chart .nav-range-input').getAttribute('max'),
+    };`);
+  check('custom interval loads', custom.count === 2 && custom.from === '2026-08-01' && custom.bars > 0,
+    `${custom.from} – ${custom.to}: ${custom.bars} bars, ${custom.lines} lines`);
+  check('the pickers refuse the future', custom.max === toDateInput(new Date()), `max=${custom.max}`);
+
+  await page.eval(`${HELPERS}
+    const inputs = qa('.card-chart .nav-range-input');
+    inputs[0].value = '2019-01-01';
+    inputs[1].value = '2019-01-05';
+    inputs[1].dispatchEvent(new Event('change', { bubbles: true }));
+    return 1;`);
+  await poll(page, `q('.card-chart .chart-empty').classList.contains('is-visible')`, 8000);
+  const emptyPeriod = await page.eval(`${HELPERS} return {
+    empty: q('.card-chart .chart-empty').classList.contains('is-visible'),
+    text: txt('.card-chart .chart-empty'), bars: qa('.card-chart rect.chart-bar').length };`);
+  check('a period before the data existed says so',
+    emptyPeriod.empty && emptyPeriod.bars === 0 && /no data for this period/i.test(emptyPeriod.text),
+    `"${emptyPeriod.text}", bars ${emptyPeriod.bars}`);
+
+  // Detailed states are purged long before statistics are, so a day far in the
+  // past has an empty power chart while its month still has bars.
+  await page.eval(`${HELPERS} q('.card-chart [data-range="day"]').click(); return 1;`);
+  await sleep(600);
+  await page.eval(`${HELPERS}
+    const input = q('.card-chart .nav-date-input');
+    input.value = '2026-02-10';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return 1;`);
+  await poll(page, `txt('.card-chart .nav-label-text') !== null && q('.card-chart .chart-empty').classList.contains('is-visible')`, 8000);
+  const dayEmptyOld = await page.eval(`${HELPERS} return {
+    empty: q('.card-chart .chart-empty').classList.contains('is-visible'),
+    hint: txt('.card-chart .chart-empty-hint') };`);
+  await page.eval(`${HELPERS} q('.card-chart [data-range="month"]').click(); return 1;`);
+  await poll(page, `qa('.card-chart rect.chart-bar').length > 0`, 8000);
+  const oldMonth = await page.eval(`${HELPERS} return {
+    monthBars: qa('.card-chart rect.chart-bar').length, label: txt('.card-chart .nav-label-text') };`);
+  check('an old day is empty while its month still has data', dayEmptyOld.empty && oldMonth.monthBars > 0,
+    `${oldMonth.label}: day empty=${dayEmptyOld.empty}, month bars=${oldMonth.monthBars}`);
+  check('the purged day names the remedy', /week|month/i.test(dayEmptyOld.hint || ''),
+    `hint "${dayEmptyOld.hint}"`);
+
+  await page.eval(`${HELPERS} q('.card-chart [data-range="day"]').click(); return 1;`);
+  await sleep(400);
+  await page.eval(`${HELPERS} q('.history-now') && !q('.history-now').closest('[hidden]') ? q('.history-now').click() : null; return 1;`);
+  await sleep(1100);
+  // Every group below measures the live diagram, so a failed reset here would
+  // surface as seven confusing geometry failures instead of one clear one.
+  const backLive = await navState();
+  check('the view is back to live for the groups that follow', backLive.mode === 'live' && backLive.flowVisible,
+    `mode=${backLive.mode}, ${backLive.label}`);
 
   /* ─────────────── 6. settings ─────────────── */
   group('Settings dialog');
@@ -393,7 +538,7 @@ try {
   check('power balance adds up', Math.abs(signs.balance || 0) < 0.05, `delta=${(signs.balance ?? NaN).toFixed?.(3)} kW`);
 
   const noBalanceNotice = await page.eval(`${HELPERS} return qa('.notice').map(n => n.className);`);
-  check('no balance warning', noBalanceNotice.length <= 2, `notices ${noBalanceNotice.length}`);
+  check('no balance warning', !noBalanceNotice.some((c) => /balance/.test(c)), `notices ${noBalanceNotice.join(' ')}`);
 
   /* ─────────────── 12. language switching ─────────────── */
   group('Language switching (English / Ukrainian)');
@@ -458,18 +603,285 @@ try {
   check('switches back to English', backEn.code === 'EN' && backEn.coverage === 'Load coverage', backEn.coverage);
   check('switching produced no window errors', backEn.errors === 0, `errors ${backEn.errors}`);
 
-  /* ─────────────── 13. accessibility ─────────────── */
+  /* ─────────────── 13. generator ─────────────── */
+  group('Generator (demo runs it 19:00-21:00)');
+  await page.goto(`${BASE}?demo=1&hour=20`);
+  await poll(page, `!!host.app && host.app._readyDone`, 8000);
+  await sleep(1500);
+  const gen = await page.eval(`${HELPERS} return {
+    layout: q('.flow-stage').dataset.layout,
+    nodeVisible: !q('.node-generator').hidden,
+    nodeValue: txt('.node-generator .node-num') + ' ' + txt('.node-generator .node-unit'),
+    linkDir: q('.link-generator').dataset.dir,
+    linkAnim: getComputedStyle(q('.link-generator .link-beads')).animationName,
+    cardVisible: !q('.card-generator').hidden,
+    cardPower: txt('.card-generator .big-num'),
+    cardBadge: txt('.card-generator .dir-badge'),
+    kpiVisible: !q('.kpi[data-key="generator"]').hidden,
+    kpiValue: txt('.kpi[data-key="generator"] .kpi-num'),
+    mixSegments: qa('.mix-seg:not(.is-zero)').length,
+    mixLegend: qa('.mix-item').map(e => e.textContent.trim()),
+    alloc: qa('.alloc-chip').map(e => e.textContent.trim()),
+    balance: app.state.meta.balance,
+    relevant: app.state.generator.relevant,
+    links: qa('.flow-link:not([hidden])').length,
+    chartSeries: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
+  };`);
+  check('five-spoke layout with the generator',
+    gen.layout === 'wideGen' && gen.nodeVisible && gen.relevant === true && gen.links === 5,
+    `layout=${gen.layout}, node ${gen.nodeValue}, links ${gen.links}`);
+  check('generator link animates towards the inverter', gen.linkDir === 'toHub' && gen.linkAnim === 'bead-run',
+    `${gen.linkDir}, ${gen.linkAnim}`);
+  check('generator card and KPI appear', gen.cardVisible && gen.kpiVisible,
+    `card ${gen.cardPower} (${gen.cardBadge}), KPI ${gen.kpiValue}`);
+  check('generator is a source in the coverage mix', gen.mixLegend.some((l) => /Generator/.test(l)),
+    gen.mixLegend.join(' / '));
+  check('distribution names the generator', gen.alloc.some((a) => /Generator/.test(a)), gen.alloc.join(' | '));
+  // Exporting while the generator runs and the battery charges: the export has
+  // to be attributed to the generator, never to the battery it is filling.
+  const genAlloc = await page.eval(`${HELPERS} return {
+    alloc: app.flow.alloc, charging: app.state.battery.charging,
+    exportKw: app.state.grid.power < 0 ? -app.state.grid.power : 0 };`);
+  const attributed = (genAlloc.alloc.generatorToGrid || 0) + (genAlloc.alloc.pvToGrid || 0) + (genAlloc.alloc.batteryToGrid || 0);
+  check('the export is attributed to the generator, not to a charging battery',
+    genAlloc.exportKw > 0.1 && Math.abs(attributed - genAlloc.exportKw) < 0.05
+      && (!genAlloc.charging || !genAlloc.alloc.batteryToGrid),
+    `export ${genAlloc.exportKw.toFixed(2)} kW = gen ${(genAlloc.alloc.generatorToGrid || 0).toFixed(2)} + pv ${(genAlloc.alloc.pvToGrid || 0).toFixed(2)} + batt ${(genAlloc.alloc.batteryToGrid || 0).toFixed(2)}`);
+  check('balance still closes with the generator running', Math.abs(gen.balance) < 0.05,
+    `delta=${gen.balance.toFixed(4)} kW`);
+  check('generator is a chart series too', gen.chartSeries.some((l) => /Generator/.test(l)), gen.chartSeries.join(' / '));
+
+  const genGeo = await page.eval(`${HELPERS}
+    const hub = rect('.node-inverter .inv-body');
+    const out = {};
+    for (const key of ['solar', 'generator', 'grid', 'battery', 'load']) {
+      const sel = { solar: '.node-solar', generator: '.node-generator', grid: '.node-grid', battery: '.node-battery', load: '.node-house' }[key];
+      const beads = q('.link-' + key + ' .link-beads');
+      const [a, b] = endpoints(beads);
+      const nr = rect(sel + ' .node-body');
+      const r = Math.min(nr.w, nr.h) / 2;
+      out[key] = { node: +Math.abs(Math.hypot(a.x - nr.cx, a.y - nr.cy) - r).toFixed(1), hub: +distToRect(b, hub).toFixed(1) };
+    }
+    return out;`);
+  for (const key of ['solar', 'generator', 'grid', 'battery', 'load']) {
+    const g = genGeo[key];
+    check(`wideGen link ${key}: endpoints at the node edges`, g.node < 14 && g.hub < 14, `node ${g.node}px, inverter ${g.hub}px`);
+  }
+  await page.screenshot(`${SHOT}-generator.png`);
+
+  await page.setViewport({ width: 390, height: 844, dpr: 3, mobile: true });
+  // The layout switch happens in an animation frame, which a preceding
+  // screenshot can delay — wait for the result instead of guessing a delay.
+  await poll(page, `q('.flow-stage').dataset.layout === 'narrowGen'`, 6000);
+  const genNarrow = await page.eval(`${HELPERS} return {
+    diag: { inner: innerWidth, stageW: q('.flow-stage').clientWidth, hasGen: app.renderer._hasGenerator },
+    layout: q('.flow-stage').dataset.layout,
+    overflow: document.documentElement.scrollWidth <= innerWidth + 1 && host.scrollWidth <= host.clientWidth + 1,
+    labelsOverlap: (() => {
+      const ls = qa('.flow-label:not([hidden])').map(e => e.getBoundingClientRect());
+      for (let i=0;i<ls.length;i++) for (let j=i+1;j<ls.length;j++) {
+        const a=ls[i], b=ls[j];
+        if (a.right > b.left+1 && b.right > a.left+1 && a.bottom > b.top+1 && b.bottom > a.top+1) return true;
+      }
+      return false;
+    })(),
+  };`);
+  check('narrow layout with the generator fits', genNarrow.layout === 'narrowGen' && genNarrow.overflow && !genNarrow.labelsOverlap,
+    `layout=${genNarrow.layout}, no overflow=${genNarrow.overflow}, labels ok=${!genNarrow.labelsOverlap}, diag=${JSON.stringify(genNarrow.diag)}`);
+
+  // The narrow paths have their own coordinates, so they need their own
+  // measurement: a wide-layout pass proves nothing about them.
+  const narrowGeo = await page.eval(`${HELPERS}
+    const hub = rect('.node-inverter .inv-body');
+    const out = {};
+    for (const key of ['solar', 'generator', 'grid', 'battery', 'load']) {
+      const sel = { solar: '.node-solar', generator: '.node-generator', grid: '.node-grid', battery: '.node-battery', load: '.node-house' }[key];
+      const beads = q('.link-' + key + ' .link-beads');
+      const [a, b] = endpoints(beads);
+      const nr = rect(sel + ' .node-body');
+      const r = Math.min(nr.w, nr.h) / 2;
+      out[key] = { node: +Math.abs(Math.hypot(a.x - nr.cx, a.y - nr.cy) - r).toFixed(1), hub: +distToRect(b, hub).toFixed(1) };
+    }
+    return out;`);
+  for (const key of ['solar', 'generator', 'grid', 'battery', 'load']) {
+    const g = narrowGeo[key];
+    check(`narrowGen link ${key}: endpoints at the node edges`, g.node < 14 && g.hub < 14, `node ${g.node}px, inverter ${g.hub}px`);
+  }
+  await page.screenshot(`${SHOT}-generator-narrow.png`);
+  await page.setViewport({ width: 1600, height: 1000 });
+  await sleep(900);
+
+  /* ─────────────── 14. sensor dialog ─────────────── */
+  group('Sensor dialog');
+  // Click and read are separate protocol calls, and the waiting between them
+  // happens here rather than inside a single long evaluation: a page that stalls
+  // mid-evaluation takes the whole run down with it, whereas poll() re-enters the
+  // page in short bounded steps.
+  const readDialog = () => page.eval(`${HELPERS} return {
+      open: !q('.detail-modal').hidden,
+      title: txt('.detail-modal .modal-title'),
+      entity: txt('.detail-entity'),
+      lines: qa('.detail-modal path.chart-line').length,
+      bars: qa('.detail-modal rect.chart-bar').length,
+      bands: qa('.detail-modal path[fill-opacity="0.16"]').length,
+      stats: qa('.detail-stat').map(e => e.textContent.trim()),
+      link: q('.detail-link') ? q('.detail-link').getAttribute('href') : null,
+      empty: !q('.detail-empty').hidden,
+      ranges: qa('.detail-modal .range-btn').length,
+      empty: !q('.detail-modal .detail-empty').hidden,
+      emptyText: txt('.detail-modal .detail-empty'),
+    };`);
+  const dialogSettled = `!q('.detail-modal').hidden && q('.detail-modal .spinner').hidden`;
+  const openDialog = async (selector) => {
+    await page.eval(`${HELPERS} q('${selector}').click(); return 1;`);
+    await poll(page, dialogSettled, 9000);
+    return readDialog();
+  };
+  const dialogRange = async (key) => {
+    await page.eval(`${HELPERS} q('.detail-modal [data-range="${key}"]').click(); return 1;`);
+    await sleep(150);                       // let the click start the request
+    await poll(page, dialogSettled, 9000);
+    return readDialog();
+  };
+  const closeDialog = () => page.eval(`${HELPERS} q('.detail-modal .modal-head .icon-btn').click(); return 1;`);
+
+  const rowDlg = await openDialog('.card-inverter .stat-row[data-role="inverterTemperature"]');
+  check('a stat row opens its sensor', rowDlg.open && rowDlg.lines >= 1,
+    `${rowDlg.title} / ${rowDlg.entity}, lines ${rowDlg.lines}`);
+  check('dialog shows min/avg/max and a link to Home Assistant',
+    rowDlg.stats.length === 3 && /history\?entity_id=/.test(rowDlg.link || ''), rowDlg.stats.join(' | '));
+
+  const band = await dialogRange('month');
+  check('over a month an instantaneous sensor gets a mean line with a min-max band',
+    band.bands === 1 && band.lines === 1, `bands ${band.bands}, lines ${band.lines}, ${band.stats.join(' | ')}`);
+  await page.screenshot(`${SHOT}-dialog.png`);
+  await closeDialog();
+  await sleep(400);
+
+  const kpiDlg = await openDialog('.kpi[data-key="solar"]');
+  // Over a day an accumulating counter is a rising line; bars appear for longer
+  // periods. The footer must show the span the counter covered, never the sum of
+  // its samples — for a rising counter that means total equals max, and summing
+  // instead would produce a number hundreds of times larger.
+  const kpiNums = kpiDlg.stats.map((x) => parseFloat(x.replace(/[^\d.]+/g, '')));
+  check('a KPI tile opens the energy sensor',
+    kpiDlg.open && kpiDlg.lines === 1 && kpiDlg.stats.length === 2
+      && Number.isFinite(kpiNums[0]) && Math.abs(kpiNums[0] - kpiNums[1]) < 0.02,
+    `${kpiDlg.title}, lines ${kpiDlg.lines}, ${kpiDlg.stats.join(' | ')}`);
+  const kpiMonth = await dialogRange('month');
+  check('over a month the energy sensor becomes bars', kpiMonth.bars > 0, `bars ${kpiMonth.bars}, ${kpiMonth.stats.join(' | ')}`);
+  await closeDialog();
+  await sleep(300);
+
+  const nodeDlg = await openDialog('.node-battery');
+  check('a diagram node opens its sensor', nodeDlg.open && (nodeDlg.lines > 0 || nodeDlg.bars > 0),
+    `${nodeDlg.title} / ${nodeDlg.entity}`);
+  const escaped = await page.eval(`${HELPERS}
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await new Promise(r => setTimeout(r, 300));
+    return q('.detail-modal').hidden;`);
+  check('Escape closes the dialog', escaped === true);
+
+  const notClickable = await page.eval(`${HELPERS}
+    const rows = qa('.stat-row[data-role]');
+    const off = rows.filter(r => r.getAttribute('aria-disabled') === 'true');
+    const on = rows.filter(r => r.classList.contains('is-clickable'));
+    const first = on[0];
+    return { total: rows.length, off: off.length, on: on.length,
+             offRole: off.length ? off[0].dataset.role : null,
+             role: first ? first.getAttribute('role') : null,
+             tabindex: first ? first.getAttribute('tabindex') : null,
+             cursor: first ? getComputedStyle(first).cursor : null };`);
+  check('rows without a mapped entity are not interactive',
+    notClickable.on > 0 && notClickable.off > 0 && notClickable.offRole !== null
+      && notClickable.on + notClickable.off === notClickable.total,
+    `${notClickable.on} of ${notClickable.total} clickable, ${notClickable.off} disabled${notClickable.offRole ? ` (e.g. ${notClickable.offRole})` : ''}`);
+  check('a clickable row is reachable and labelled for a screen reader',
+    notClickable.role === 'button' && notClickable.tabindex === '0' && notClickable.cursor === 'pointer',
+    `role=${notClickable.role}, tabindex=${notClickable.tabindex}, cursor=${notClickable.cursor}`);
+
+  // Enter and Space must open the dialog: the rows advertise role="button".
+  await page.eval(`${HELPERS}
+    const row = qa('.stat-row[data-role].is-clickable')[0];
+    row.focus();
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    return 1;`);
+  await poll(page, dialogSettled, 9000);
+  const keyDlg = await readDialog();
+  check('Enter opens the dialog from a focused row', keyDlg.open && !!keyDlg.entity, `${keyDlg.title} / ${keyDlg.entity}`);
+  await closeDialog();
+  await sleep(250);
+  await page.eval(`${HELPERS}
+    const row = qa('.stat-row[data-role].is-clickable')[0];
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    return 1;`);
+  await poll(page, dialogSettled, 9000);
+  const spaceDlg = await readDialog();
+  check('Space opens it too', spaceDlg.open === true);
+  await closeDialog();
+  await sleep(250);
+
+  // Rows built during an update, not at mount: they used to miss the treatment.
+  const stringDlg = await openDialog('.string-row[data-role]');
+  check('a PV string row opens its own sensor', stringDlg.open && /pv/i.test(stringDlg.entity || ''),
+    `${stringDlg.title} / ${stringDlg.entity}`);
+  await closeDialog();
+  await sleep(250);
+  const phaseDlg = await openDialog('.phase-row[data-role]');
+  check('a phase row opens its own sensor', phaseDlg.open && !!phaseDlg.entity,
+    `${phaseDlg.title} / ${phaseDlg.entity}`);
+  await closeDialog();
+  await sleep(250);
+
+  // sensor.deye_battery_soh declares no state_class, so Recorder keeps no
+  // statistics for it — the dialog must say that rather than draw nothing.
+  await openDialog('.card-battery [data-role="batterySoh"]');
+  const noStats = await dialogRange('month');
+  check('a sensor without statistics explains itself',
+    noStats.empty && /no recorded history/i.test(noStats.emptyText || '')
+      && /state_class/i.test(noStats.emptyText || '') && noStats.lines === 0,
+    `empty=${noStats.empty}, "${(noStats.emptyText || '').slice(0, 90)}"`);
+  await closeDialog();
+  await sleep(250);
+
+  /* ─────────────── 15. animation setting ─────────────── */
+  group('Flow animation setting');
+  const animState = () => page.eval(`${HELPERS}
+    const cs = getComputedStyle(q('.link-solar .link-beads'));
+    return { attr: q('.app').dataset.anim, name: cs.animationName, dur: cs.animationDuration };`);
+  const setAnim = async (mode) => {
+    await page.eval(`${HELPERS} app.applyConfig({ ...app.config, animations: '${mode}' }, false); return 1;`);
+    await sleep(700);
+  };
+  await setAnim('off');
+  let a = await animState();
+  check('off disables the animation', a.attr === 'off' && parseFloat(a.dur) < 0.01, `${a.attr}, ${a.dur}`);
+  await setAnim('auto');
+  a = await animState();
+  check('auto animates when the system does not object', a.attr === 'auto' && parseFloat(a.dur) > 0.4, `${a.attr}, ${a.dur}`);
+
+  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await sleep(400);
+  a = await animState();
+  check('auto respects the system reduce-motion setting', parseFloat(a.dur) < 0.01, `${a.attr}, ${a.dur}`);
+  await setAnim('on');
+  a = await animState();
+  check('on animates even under reduce-motion', a.attr === 'on' && parseFloat(a.dur) > 0.4, `${a.attr}, ${a.dur}`);
+  await page.send('Emulation.setEmulatedMedia', { features: [] });
+  await setAnim('auto');
+
+  /* ─────────────── 16. accessibility ─────────────── */
   group('Accessibility');
   const a11y = await page.eval(`${HELPERS} return {
     iconBtns: qa('.icon-btn').length,
     labeled: qa('.icon-btn[aria-label]').length,
-    tabs: qa('.range-btn[role="tab"][aria-selected]').length,
+    tabs: qa('.card-chart .range-btn[role="tab"][aria-selected]').length,
     svgHidden: qa('svg[aria-hidden="true"]').length,
     contrastVars: getComputedStyle(host).getPropertyValue('--text-0').trim(),
     focusVisible: (() => { const b = q('.range-btn'); b.focus(); return sr.activeElement === b; })(),
   };`);
   check('icon buttons carry an aria-label', a11y.labeled === a11y.iconBtns, `${a11y.labeled}/${a11y.iconBtns}`);
-  check('range switch exposes tabs with aria-selected', a11y.tabs === 3, `${a11y.tabs}`);
+  check('range switch exposes tabs with aria-selected', a11y.tabs === 5, `${a11y.tabs}`);
   check('decorative SVG hidden from screen readers', a11y.svgHidden >= 5, `${a11y.svgHidden}`);
   check('buttons are focusable', a11y.focusVisible === true);
 
@@ -481,12 +893,14 @@ try {
 
   const finalWin = await page.windowErrors();
   check('final: page has no window errors', finalWin.length === 0, finalWin.join(' | ') || 'clean');
-  console.log(`\n${'='.repeat(60)}\nPASSED: ${pass}   FAILED: ${fail}`);
-  if (fail) { console.log('\nFailures:'); failures.forEach((f) => console.log('  - ' + f)); }
 } catch (e) {
   console.error('\nTEST CRASHED:', e.stack);
   fail++;
 } finally {
+  // The summary belongs in `finally`: a crash halfway through still leaves a
+  // list of what had already failed, which is the useful part.
+  console.log(`\n${'='.repeat(60)}\nPASSED: ${pass}   FAILED: ${fail}`);
+  if (failures.length) { console.log('\nFailures:'); failures.forEach((f) => console.log('  - ' + f)); }
   await browser.close();
   try { (await import('node:child_process')).execSync(`pkill -f "cdp-profile-${browser.port}" || true`); } catch {}
   process.exit(fail ? 1 : 0);

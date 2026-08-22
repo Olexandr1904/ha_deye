@@ -93,7 +93,7 @@ const EN = {
   'grid.idle': 'IDLE',
 
   /* ── KPI ── */
-  'kpi.pvToday': 'PV TODAY',
+  'kpi.pvToday': 'SOLAR',
   'kpi.consumption': 'CONSUMPTION',
   'kpi.gridImport': 'GRID IMPORT',
   'kpi.gridExport': 'GRID EXPORT',
@@ -102,12 +102,8 @@ const EN = {
   'kpi.selfSufficiency': 'SELF-SUFFICIENCY',
 
   /* ── chart ── */
-  'chart.powerToday': 'POWER TODAY',
-  'chart.energy7': 'ENERGY · LAST 7 DAYS',
-  'chart.energy30': 'ENERGY · LAST 30 DAYS',
-  'chart.rangeToday': 'Today',
-  'chart.range7d': '7 Days',
-  'chart.range30d': '30 Days',
+  'chart.power': 'POWER',
+  'chart.energy': 'ENERGY',
   'chart.noData': 'No data for this period',
 
   /* ── units (SI symbols; Ukrainian uses Cyrillic ones) ── */
@@ -121,6 +117,41 @@ const EN = {
   'unit.A': 'A',
   'unit.Hz': 'Hz',
   'unit.C': '°C',
+
+  /* ── periods and navigation ── */
+  'range.day': 'Day',
+  'range.week': 'Week',
+  'range.month': 'Month',
+  'range.year': 'Year',
+  'range.custom': 'Custom',
+  'nav.prev': 'Previous period',
+  'nav.next': 'Next period',
+  'nav.today': 'Now',
+  'nav.pickDate': 'Pick a date',
+  'nav.from': 'From',
+  'nav.to': 'To',
+  'history.viewing': 'VIEWING {period}',
+  'history.hint': 'Live values are unavailable for a past period',
+
+  /* ── generator ── */
+  'node.generator': 'GENERATOR',
+  'card.generator': 'GENERATOR',
+  'src.generator': 'Generator',
+  'kpi.generator': 'GENERATOR',
+  'stat.generatorPower': 'Generator power',
+  'gen.running': 'RUNNING',
+  'gen.stopped': 'STOPPED',
+
+  /* ── sensor dialog ── */
+  'detail.min': 'min',
+  'detail.avg': 'avg',
+  'detail.max': 'max',
+  'detail.total': 'total',
+  'detail.openInHa': 'Open in Home Assistant',
+  'detail.noHistory': 'This sensor has no recorded history',
+  'detail.noHistoryHint': 'Long-term statistics need a <code>state_class</code> on the sensor and the entity must not be excluded from Recorder.',
+  'detail.noDataPeriod': 'No data for this period',
+  'detail.dayTooOld': 'Detailed history is kept for a limited number of days. Switch to Week or Month for older periods.',
 
   /* ── durations ── */
   'time.days': '{v} d',
@@ -206,6 +237,9 @@ const EN = {
   'settings.phasesNever': 'hidden',
   'settings.defaultRange': 'Default chart range',
   'settings.animations': 'Flow animation',
+  'settings.animationsAuto': 'auto (respect the system reduce-motion setting)',
+  'settings.animationsOn': 'always animate',
+  'settings.animationsOff': 'never animate',
   'settings.debug': 'Debug mode (console logs)',
   'settings.demoMode': 'Demo mode (test data)',
 
@@ -322,7 +356,7 @@ const UK = {
   'grid.toGrid': 'ДІМ → МЕРЕЖА',
   'grid.idle': 'СПОКІЙ',
 
-  'kpi.pvToday': 'СОНЦЕ ЗА ДОБУ',
+  'kpi.pvToday': 'СОНЦЕ',
   'kpi.consumption': 'СПОЖИВАННЯ',
   'kpi.gridImport': 'ІМПОРТ З МЕРЕЖІ',
   'kpi.gridExport': 'ЕКСПОРТ У МЕРЕЖУ',
@@ -330,12 +364,8 @@ const UK = {
   'kpi.batteryUsed': 'РОЗРЯД БАТАРЕЇ',
   'kpi.selfSufficiency': 'САМОЗАБЕЗПЕЧЕННЯ',
 
-  'chart.powerToday': 'ПОТУЖНІСТЬ ЗА ДОБУ',
-  'chart.energy7': 'ЕНЕРГІЯ · 7 ДНІВ',
-  'chart.energy30': 'ЕНЕРГІЯ · 30 ДНІВ',
-  'chart.rangeToday': 'Доба',
-  'chart.range7d': '7 днів',
-  'chart.range30d': '30 днів',
+  'chart.power': 'ПОТУЖНІСТЬ',
+  'chart.energy': 'ЕНЕРГІЯ',
   'chart.noData': 'Немає даних за період',
 
   'unit.W': 'Вт',
@@ -347,6 +377,44 @@ const UK = {
   'unit.V': 'В',
   'unit.A': 'А',
   'unit.Hz': 'Гц',
+
+  'range.day': 'Доба',
+  'range.week': 'Тиждень',
+  'range.month': 'Місяць',
+  'range.year': 'Рік',
+  'range.custom': 'Свій',
+  'nav.prev': 'Попередній період',
+  'nav.next': 'Наступний період',
+  'nav.today': 'Зараз',
+  'nav.pickDate': 'Вибрати дату',
+  'nav.from': 'Від',
+  'nav.to': 'До',
+  'history.viewing': 'ПЕРІОД {period}',
+  'history.hint': 'Поточні значення для минулого періоду недоступні',
+
+  'node.generator': 'ГЕНЕРАТОР',
+  'card.generator': 'ГЕНЕРАТОР',
+  'src.generator': 'Генератор',
+  'kpi.generator': 'ГЕНЕРАТОР',
+  'stat.generatorPower': 'Потужність генератора',
+  'gen.running': 'ПРАЦЮЄ',
+  'gen.stopped': 'ЗУПИНЕНО',
+
+  'detail.min': 'мін',
+  'detail.avg': 'сер',
+  'detail.max': 'макс',
+  'detail.total': 'усього',
+  'detail.openInHa': 'Відкрити в Home Assistant',
+  'detail.noHistory': 'У цього датчика немає записаної історії',
+  'detail.noHistoryHint': 'Для довгострокової статистики датчику потрібен <code>state_class</code>, і він не має бути виключений з Recorder.',
+  'detail.noDataPeriod': 'Немає даних за період',
+  'detail.dayTooOld': 'Детальна історія зберігається обмежену кількість днів. Для давніших періодів перемкніться на Тиждень або Місяць.',
+
+  'role.generatorPower': 'Потужність генератора',
+  'role.generatorToday': 'Генератор за добу',
+  'role.generatorTotal': 'Генератор усього',
+  'role.generatorVoltage': 'Напруга генератора',
+  'role.generatorStatus': 'Стан генератора',
 
   'time.days': '{v} дн',
   'time.hoursMinutes': '{h} год {m} хв',
@@ -428,6 +496,9 @@ const UK = {
   'settings.phasesNever': 'приховати',
   'settings.defaultRange': 'Діапазон за замовчуванням',
   'settings.animations': 'Анімація потоків',
+  'settings.animationsAuto': 'авто (враховувати системне «зменшити рух»)',
+  'settings.animationsOn': 'завжди анімувати',
+  'settings.animationsOff': 'ніколи не анімувати',
   'settings.debug': 'Режим відладки (логи в консолі)',
   'settings.demoMode': 'Демо-режим (тестові дані)',
 
@@ -502,6 +573,8 @@ const UK = {
   'role.batteryStatus': 'Стан батареї (заряд/розряд)',
   'role.batteryChargeToday': 'Заряджено за добу',
   'role.batteryDischargeToday': 'Розряджено за добу',
+  'role.batteryChargeTotal': 'Заряджено всього',
+  'role.batteryDischargeTotal': 'Розряджено всього',
   'role.gridPower': 'Потужність мережі (+/-)',
   'role.gridImportPower': 'Потужність імпорту (необовʼязково)',
   'role.gridExportPower': 'Потужність експорту (необовʼязково)',

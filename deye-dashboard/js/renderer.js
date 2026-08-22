@@ -12,22 +12,24 @@ import {
   fmtClock, fmtDate, fmtAgo, fmtHours, isNum, clamp, DASH,
 } from './utils.js';
 import { t, getLanguage, LANGUAGES } from './i18n.js';
-import { FLOW_LAYOUTS, LINK_NODE } from './flow-layout.js';
+import { FLOW_LAYOUTS, LINK_KEYS, pickLayout } from './flow-layout.js';
+import { DateNav } from './date-nav.js';
+import { periodLabel } from './ranges.js';
 
-const RANGES = [
-  { key: 'today', label: 'chart.rangeToday' },
-  { key: '7d', label: 'chart.range7d' },
-  { key: '30d', label: 'chart.range30d' },
-];
-
+/**
+ * KPI tiles. Values arrive from the app as a plain object, because the source
+ * differs by period: today's live daily counters, or long-term statistics.
+ * `role` makes the tile open the sensor dialog when that period uses an entity.
+ */
 const KPI_DEFS = [
-  { key: 'pvToday', label: 'kpi.pvToday', icon: 'sun', tone: 'solar', kind: 'energy', get: (st) => st.pv.today },
-  { key: 'loadToday', label: 'kpi.consumption', icon: 'house', tone: 'load', kind: 'energy', get: (st) => st.load.today },
-  { key: 'gridImport', label: 'kpi.gridImport', icon: 'grid', tone: 'grid', kind: 'energy', get: (st) => st.grid.todayImport },
-  { key: 'gridExport', label: 'kpi.gridExport', icon: 'bolt', tone: 'grid', kind: 'energy', get: (st) => st.grid.todayExport },
-  { key: 'battCharge', label: 'kpi.batteryCharged', icon: 'battery', tone: 'battery', kind: 'energy', optional: true, get: (st) => st.battery.chargeToday },
-  { key: 'battDischarge', label: 'kpi.batteryUsed', icon: 'battery', tone: 'battery', kind: 'energy', optional: true, get: (st) => st.battery.dischargeToday },
-  { key: 'selfSufficiency', label: 'kpi.selfSufficiency', icon: 'check', tone: 'accent', kind: 'percent', optional: true, get: (st, flow) => flow.selfSufficiency },
+  { key: 'solar', label: 'kpi.pvToday', icon: 'sun', tone: 'solar', kind: 'energy', role: 'pvToday' },
+  { key: 'consumption', label: 'kpi.consumption', icon: 'house', tone: 'load', kind: 'energy', role: 'loadToday' },
+  { key: 'gridImport', label: 'kpi.gridImport', icon: 'grid', tone: 'grid', kind: 'energy', role: 'gridImportToday' },
+  { key: 'gridExport', label: 'kpi.gridExport', icon: 'bolt', tone: 'grid', kind: 'energy', role: 'gridExportToday' },
+  { key: 'generator', label: 'kpi.generator', icon: 'generator', tone: 'generator', kind: 'energy', optional: true, role: 'generatorToday' },
+  { key: 'batteryCharged', label: 'kpi.batteryCharged', icon: 'battery', tone: 'battery', kind: 'energy', optional: true, role: 'batteryChargeToday' },
+  { key: 'batteryUsed', label: 'kpi.batteryUsed', icon: 'battery', tone: 'battery', kind: 'energy', optional: true, role: 'batteryDischargeToday' },
+  { key: 'selfSufficiency', label: 'kpi.selfSufficiency', icon: 'check', tone: 'accent', kind: 'percent', optional: true },
 ];
 
 const STATUS_KEY = {
@@ -42,7 +44,6 @@ export class DashboardRenderer {
     this.opts = opts;
     this.r = {};                // cached node references
     this.flowLayout = null;
-    this.range = opts.range || 'today';
   }
 
   /* ─────────────────────────── markup ─────────────────────────── */
@@ -55,12 +56,71 @@ export class DashboardRenderer {
     this._noticeKey = null;
     this._mixKey = null;
     this._allocKey = null;
-    this.root.innerHTML = '';
+    // Remove only what this renderer put here: the dialogs are siblings inside
+    // the same container (so one data-anim covers them) and must survive a
+    // language remount — wiping the container would leave them detached.
+    if (this.app) this.app.remove();
+    if (this.r.onboard) this.r.onboard.remove();
     this.app = h('div', { class: 'app' });
     this.app.append(this._buildTopbar(), this._buildNotices(), this._buildGrid());
     this.root.append(this.app, this._buildOnboarding());
     this._installFlowLayout();
+    // One delegated listener for every value that can be drilled into.
+    this.app.addEventListener('click', (e) => this._onValueActivate(e));
+    this.app.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') this._onValueActivate(e);
+    });
     return this.app;
+  }
+
+  /** Opens the sensor dialog for the nearest ancestor carrying data-role. */
+  _onValueActivate(e) {
+    const target = e.target.closest('[data-role]');
+    if (!target || !target.dataset.role) return;
+    if (target.getAttribute('aria-disabled') === 'true') return;
+    // The role set is the authority: a row created after the last refresh has
+    // no attributes yet and must not open an empty dialog.
+    if (this._roleSet && !this._roleSet.has(target.dataset.role)) return;
+    e.preventDefault();
+    if (this.opts.onOpenDetail) this.opts.onOpenDetail(target.dataset.role);
+  }
+
+  /** Marks which roles actually have an entity, so only those look clickable. */
+  setInteractiveRoles(roleSet) {
+    this._roleSet = roleSet;
+    for (const el of this.app.querySelectorAll('[data-role]')) this._markInteractive(el);
+  }
+
+  /**
+   * Applies the affordances to one element. Rows built during an update (PV
+   * strings, phases) are created long after setInteractiveRoles ran, so they
+   * have to ask for the treatment themselves.
+   */
+  _markInteractive(el) {
+    const ok = !!(this._roleSet && this._roleSet.has(el.dataset.role));
+    toggleClass(el, 'is-clickable', ok);
+    setAttr(el, 'role', ok ? 'button' : null);
+    setAttr(el, 'tabindex', ok ? '0' : null);
+    setAttr(el, 'aria-disabled', ok ? null : 'true');
+  }
+
+  /** live | history — hides the diagram and the detail cards in history mode. */
+  setMode(mode, view) {
+    setAttr(this.app, 'data-mode', mode);
+    const historical = mode === 'history';
+    setAttr(this.r.historyBar, 'hidden', !historical);
+    if (historical && view) {
+      setText(this.r.historyLabel, t('history.viewing', { period: periodLabel(view) }));
+    }
+  }
+
+  /** auto | on | off — see the reduce-motion handling in dashboard.css. */
+  setAnimations(mode) {
+    const value = ['auto', 'on', 'off'].includes(mode) ? mode : 'auto';
+    setAttr(this.app, 'data-anim', value);
+    // The dialogs live outside .app, so the setting has to sit on the container
+    // they share — otherwise "off" never reaches a spinner in a modal.
+    if (this.root && this.root.setAttribute) setAttr(this.root, 'data-anim', value);
   }
 
   _buildTopbar() {
@@ -97,8 +157,18 @@ export class DashboardRenderer {
   }
 
   _buildNotices() {
-    this.r.notices = h('div', { class: 'notices' });
-    return this.r.notices;
+    const r = this.r;
+    r.historyLabel = h('span', { class: 'history-label' });
+    r.historyBar = h('div', { class: 'history-bar', hidden: true },
+      h('span', { class: 'history-icon', html: icon('calendar', { size: 15 }) }),
+      r.historyLabel,
+      h('span', { class: 'history-hint', text: t('history.hint') }),
+      h('button', {
+        class: 'btn btn-ghost history-now', type: 'button', text: t('nav.today'),
+        onclick: () => this.opts.onNow && this.opts.onNow(),
+      }));
+    r.notices = h('div', { class: 'notices' });
+    return h('div', { class: 'above-grid' }, r.historyBar, r.notices);
   }
 
   _buildGrid() {
@@ -111,6 +181,7 @@ export class DashboardRenderer {
       this._buildChartCard(),
       h('div', { class: 'detail-row' },
         this._buildSolarCard(),
+        this._buildGeneratorCard(),
         this._buildPhasesCard(),
         this._buildInverterCard()));
   }
@@ -122,7 +193,7 @@ export class DashboardRenderer {
     r.flowSvg = s('svg', { class: 'flow-svg', viewBox: '0 0 1000 700', preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true' });
     r.flowLinks = {};
     const gLinks = s('g', { class: 'flow-links' });
-    for (const key of ['solar', 'battery', 'grid', 'load']) {
+    for (const key of LINK_KEYS) {
       const track = s('path', { class: 'link-track', fill: 'none' });
       const glow = s('path', { class: 'link-glow', fill: 'none' });
       const beads = s('path', { class: 'link-beads', fill: 'none' });
@@ -135,15 +206,16 @@ export class DashboardRenderer {
     r.nodes = {};
     const nodesWrap = h('div', { class: 'flow-nodes' });
     nodesWrap.append(
-      this._node('solar', t('node.solar'), 'sun'),
-      this._node('grid', t('node.grid'), 'grid'),
-      this._node('house', t('node.house'), 'house'),
+      this._node('solar', t('node.solar'), 'sun', 'pvPower'),
+      this._node('generator', t('node.generator'), 'generator', 'generatorPower'),
+      this._node('grid', t('node.grid'), 'grid', 'gridPower'),
+      this._node('house', t('node.house'), 'house', 'loadPower'),
       this._batteryNode(),
       this._inverterNode());
 
     r.flowLabels = {};
     const labelsWrap = h('div', { class: 'flow-labels' });
-    for (const key of ['solar', 'battery', 'grid', 'load']) {
+    for (const key of LINK_KEYS) {
       const arrow = h('span', { class: 'fl-arrow', html: '' });
       const val = h('span', { class: 'fl-value', text: DASH });
       const el = h('div', { class: `flow-label fl-${key}`, 'data-dir': 'idle' }, arrow, val);
@@ -155,7 +227,8 @@ export class DashboardRenderer {
 
     // distribution (calculated, not measured)
     r.mixBar = h('div', { class: 'mix-bar' },
-      h('span', { class: 'mix-seg mix-pv' }), h('span', { class: 'mix-seg mix-batt' }), h('span', { class: 'mix-seg mix-grid' }));
+      h('span', { class: 'mix-seg mix-pv' }), h('span', { class: 'mix-seg mix-gen' }),
+      h('span', { class: 'mix-seg mix-batt' }), h('span', { class: 'mix-seg mix-grid' }));
     r.mixLegend = h('div', { class: 'mix-legend' });
     r.allocList = h('div', { class: 'alloc-list' });
     r.flowFooter = h('div', { class: 'flow-footer' },
@@ -167,12 +240,15 @@ export class DashboardRenderer {
     return card('card-flow', { title: t('card.flow'), icon: 'chart', hideHeader: true }, r.flowStage, r.flowFooter);
   }
 
-  _node(key, label, iconName) {
+  _node(key, label, iconName, role) {
     const r = this.r;
     const num = h('span', { class: 'node-num', text: DASH });
     const unit = h('span', { class: 'node-unit', text: '' });
     const sub = h('span', { class: 'node-sub', text: '' });
-    const node = h('div', { class: `flow-node node-${key} tone-${key === 'house' ? 'load' : key}` },
+    const node = h('div', {
+      class: `flow-node node-${key} tone-${key === 'house' ? 'load' : key}`,
+      dataset: role ? { role } : {},
+    },
       h('div', { class: 'node-glow' }),
       h('div', { class: 'node-body' },
         h('span', { class: 'node-icon', html: icon(iconName, { size: 22 }) }),
@@ -189,7 +265,7 @@ export class DashboardRenderer {
     const unit = h('span', { class: 'node-unit', text: '%' });
     const sub = h('span', { class: 'node-sub', text: '' });
     const level = h('span', { class: 'node-level-fill' });
-    const node = h('div', { class: 'flow-node node-battery tone-battery' },
+    const node = h('div', { class: 'flow-node node-battery tone-battery', dataset: { role: 'batterySoc' } },
       h('div', { class: 'node-glow' }),
       h('div', { class: 'node-body' },
         h('span', { class: 'node-icon', html: icon('battery', { size: 22 }) }),
@@ -220,7 +296,7 @@ export class DashboardRenderer {
 
   _installFlowLayout(force) {
     const width = this.r.flowStage ? this.r.flowStage.clientWidth : 0;
-    const want = width && width < 620 ? 'narrow' : 'wide';
+    const want = pickLayout(width, !!this._hasGenerator);
     if (!force && want === this.flowLayout) return;
     this.flowLayout = want;
     const L = FLOW_LAYOUTS[want];
@@ -236,20 +312,25 @@ export class DashboardRenderer {
     r.flowStage.style.setProperty('--hub-size', `${L.hubSize}%`);
     r.flowStage.dataset.layout = want;
 
+    // A node or link absent from this layout (the generator, most of the time)
+    // is hidden rather than left at stale coordinates.
     for (const [key, node] of Object.entries(r.nodes)) {
       const pos = L.nodes[key];
+      setAttr(node.node, 'hidden', !pos);
       if (!pos) continue;
       node.node.style.left = `${pos.x}%`;
       node.node.style.top = `${pos.y}%`;
     }
     for (const [key, link] of Object.entries(r.flowLinks)) {
       const d = L.paths[key] || '';
+      setAttr(link.g, 'hidden', !d);
       setAttr(link.track, 'd', d);
       setAttr(link.glow, 'd', d);
       setAttr(link.beads, 'd', d);
     }
     for (const [key, label] of Object.entries(r.flowLabels)) {
       const pos = L.labels[key];
+      setAttr(label.el, 'hidden', !pos);
       if (!pos) continue;
       label.el.style.left = `${pos.x}%`;
       label.el.style.top = `${pos.y}%`;
@@ -270,11 +351,19 @@ export class DashboardRenderer {
     if (!this.r.flowStage || this._flowRo) return;
     // Switching the layout changes the width of the observed element. Doing that
     // inside the callback makes ResizeObserver complain with "loop completed with
-    // undelivered notifications", so the change is deferred to the next frame.
+    // undelivered notifications", so the change is deferred — but not to a frame
+    // alone: a page that has stopped producing frames would keep a stale layout,
+    // so a timer races the frame and whichever arrives first wins.
     this._flowRo = new ResizeObserver(() => {
       if (this._flowPending) return;
       this._flowPending = true;
-      requestAnimationFrame(() => { this._flowPending = false; this._installFlowLayout(); });
+      const run = () => {
+        if (!this._flowPending) return;
+        this._flowPending = false;
+        this._installFlowLayout();
+      };
+      requestAnimationFrame(run);
+      setTimeout(run, 120);
     });
     this._flowRo.observe(this.r.flowStage);
   }
@@ -311,8 +400,15 @@ export class DashboardRenderer {
     };
 
     const rowsWrap = h('div', { class: 'stat-rows' });
-    for (const [key, label] of [['voltage', t('stat.voltage')], ['current', t('stat.current')], ['temperature', t('stat.temperature')], ['soh', t('stat.health')], ['eta', t('stat.timeToFull')], ['cycleToday', t('stat.chargeDischarge')]]) {
-      const row = statRow(label);
+    for (const [key, label, role] of [
+      ['voltage', t('stat.voltage'), 'batteryVoltage'],
+      ['current', t('stat.current'), 'batteryCurrent'],
+      ['temperature', t('stat.temperature'), 'batteryTemperature'],
+      ['soh', t('stat.health'), 'batterySoh'],
+      ['eta', t('stat.timeToFull'), null],
+      ['cycleToday', t('stat.chargeDischarge'), null],
+    ]) {
+      const row = statRow(label, role);
       r.battery.rows[key] = row;
       rowsWrap.appendChild(row.node);
     }
@@ -338,7 +434,10 @@ export class DashboardRenderer {
     for (const def of KPI_DEFS) {
       const num = h('span', { class: 'kpi-num', text: DASH });
       const unit = h('span', { class: 'kpi-unit', text: '' });
-      const node = h('article', { class: `kpi tone-${def.tone}`, 'data-key': def.key },
+      const node = h('article', {
+        class: `kpi tone-${def.tone}`, 'data-key': def.key,
+        dataset: def.role ? { role: def.role } : {},
+      },
         h('div', { class: 'kpi-head' },
           h('span', { class: 'kpi-icon', html: icon(def.icon, { size: 15 }) }),
           h('span', { class: 'kpi-label', text: t(def.label) })),
@@ -353,30 +452,23 @@ export class DashboardRenderer {
 
   _buildChartCard() {
     const r = this.r;
-    r.rangeBtns = {};
-    const switcher = h('div', { class: 'range-switch', role: 'tablist' });
-    for (const rg of RANGES) {
-      const btn = h('button', {
-        class: ['range-btn', rg.key === this.range ? 'is-active' : ''],
-        type: 'button', role: 'tab', 'aria-selected': String(rg.key === this.range), text: t(rg.label),
-        onclick: () => this.opts.onRangeChange && this.opts.onRangeChange(rg.key),
-      });
-      r.rangeBtns[rg.key] = btn;
-      switcher.appendChild(btn);
-    }
+    // The nav is built here, not injected, so a language switch rebuilds its
+    // labels along with the rest of the DOM.
+    r.dateNav = new DateNav({ onChange: (v) => this.opts.onViewChange && this.opts.onViewChange(v) });
     r.chartHost = h('div', { class: 'chart-host' });
-    r.chartTitle = h('span', { class: 'card-title-text', text: t('chart.powerToday') });
+    r.chartTitle = h('span', { class: 'card-title-text', text: t('chart.power') });
     r.chartSpinner = h('span', { class: 'spinner', hidden: true });
-    return card('card-chart', { titleEl: r.chartTitle, icon: 'chart', extra: h('div', { class: 'card-actions' }, r.chartSpinner, switcher) }, r.chartHost);
+    return card('card-chart', {
+      titleEl: r.chartTitle,
+      icon: 'chart',
+      extra: h('div', { class: 'card-actions' }, r.chartSpinner, r.dateNav.element),
+    }, r.chartHost);
   }
 
-  setRange(range) {
-    this.range = range;
-    for (const [key, btn] of Object.entries(this.r.rangeBtns)) {
-      toggleClass(btn, 'is-active', key === range);
-      setAttr(btn, 'aria-selected', String(key === range));
-    }
-    setText(this.r.chartTitle, t(range === 'today' ? 'chart.powerToday' : range === '7d' ? 'chart.energy7' : 'chart.energy30'));
+  /** Reflects the selected period in the header and the nav. */
+  setView(view, step) {
+    this.r.dateNav.setView(view);
+    setText(this.r.chartTitle, t(step === 'power' ? 'chart.power' : 'chart.energy'));
   }
 
   setChartBusy(busy) { setAttr(this.r.chartSpinner, 'hidden', !busy); }
@@ -388,8 +480,12 @@ export class DashboardRenderer {
     r.solar = { strings: [], rows: {} };
     r.solarStrings = h('div', { class: 'string-list' });
     const rowsWrap = h('div', { class: 'stat-rows' });
-    for (const [key, label] of [['power', t('stat.pvPower')], ['today', t('stat.today')], ['total', t('stat.total')]]) {
-      const row = statRow(label);
+    for (const [key, label, role] of [
+      ['power', t('stat.pvPower'), 'pvPower'],
+      ['today', t('stat.today'), 'pvToday'],
+      ['total', t('stat.total'), 'pvTotal'],
+    ]) {
+      const row = statRow(label, role);
       r.solar.rows[key] = row;
       rowsWrap.appendChild(row.node);
     }
@@ -404,8 +500,13 @@ export class DashboardRenderer {
     const badge = h('span', { class: 'dir-badge', text: t('grid.idle') });
     r.grid = { num, unit, badge, rows: {} };
     const rowsWrap = h('div', { class: 'stat-rows' });
-    for (const [key, label] of [['import', t('stat.importToday')], ['export', t('stat.exportToday')], ['voltage', t('stat.voltage')], ['frequency', t('stat.frequency')]]) {
-      const row = statRow(label);
+    for (const [key, label, role] of [
+      ['import', t('stat.importToday'), 'gridImportToday'],
+      ['export', t('stat.exportToday'), 'gridExportToday'],
+      ['voltage', t('stat.voltage'), 'gridVoltage'],
+      ['frequency', t('stat.frequency'), 'gridFrequency'],
+    ]) {
+      const row = statRow(label, role);
       r.grid.rows[key] = row;
       rowsWrap.appendChild(row.node);
     }
@@ -418,11 +519,11 @@ export class DashboardRenderer {
     const r = this.r;
     r.phases = {};
     const wrap = h('div', { class: 'phase-list' });
-    for (const [key, label] of [['l1', 'L1'], ['l2', 'L2'], ['l3', 'L3']]) {
+    for (const [key, label, role] of [['l1', 'L1', 'phaseAPower'], ['l2', 'L2', 'phaseBPower'], ['l3', 'L3', 'phaseCPower']]) {
       const value = h('span', { class: 'phase-value', text: DASH });
       const meta = h('span', { class: 'phase-meta', text: '' });
       const bar = h('span', { class: 'bar-fill' });
-      const node = h('div', { class: 'phase-row' },
+      const node = h('div', { class: 'phase-row', dataset: { role } },
         h('div', { class: 'phase-head' },
           h('span', { class: 'phase-name', text: label }), value),
         h('span', { class: 'bar' }, bar),
@@ -434,6 +535,45 @@ export class DashboardRenderer {
     return r.phasesCard;
   }
 
+  _buildGeneratorCard() {
+    const r = this.r;
+    const num = h('span', { class: 'big-num', text: DASH });
+    const unit = h('span', { class: 'big-unit', text: '' });
+    const badge = h('span', { class: 'dir-badge', text: t('gen.stopped') });
+    r.generator = { num, unit, badge, rows: {} };
+    const rowsWrap = h('div', { class: 'stat-rows' });
+    for (const [key, label, role] of [
+      ['today', t('stat.today'), 'generatorToday'],
+      ['total', t('stat.total'), 'generatorTotal'],
+      ['voltage', t('stat.voltage'), 'generatorVoltage'],
+    ]) {
+      const row = statRow(label, role);
+      r.generator.rows[key] = row;
+      rowsWrap.appendChild(row.node);
+    }
+    r.generatorCard = card('card-generator tone-generator', { title: t('card.generator'), icon: 'generator' },
+      h('div', { class: 'card-hero' }, h('div', { class: 'big-value' }, num, unit), badge), rowsWrap);
+    setAttr(r.generatorCard, 'hidden', true);
+    return r.generatorCard;
+  }
+
+  _updateGenerator(state) {
+    const g = this.r.generator;
+    const st = state.generator || {};
+    setAttr(this.r.generatorCard, 'hidden', !st.relevant);
+    if (!st.relevant) return;
+    const f = formatPower(st.power);
+    setText(g.num, f.value);
+    setText(g.unit, f.unit);
+    setText(g.badge, st.running ? t('gen.running') : t('gen.stopped'));
+    setAttr(g.badge, 'data-state', st.running ? 'online' : 'standby');
+    setRow(g.rows.today, st.today, 'energy');
+    setRow(g.rows.total, st.total, 'energy');
+    setRow(g.rows.voltage, st.voltage, 'voltage');
+    setAttr(g.rows.voltage.node, 'hidden', !isNum(st.voltage));
+    setAttr(g.rows.total.node, 'hidden', !isNum(st.total));
+  }
+
   _buildInverterCard() {
     const r = this.r;
     const num = h('span', { class: 'big-num', text: DASH });
@@ -441,8 +581,14 @@ export class DashboardRenderer {
     const badge = h('span', { class: 'dir-badge', text: t('inv.unknown') });
     r.inverter = { num, unit, badge, rows: {} };
     const rowsWrap = h('div', { class: 'stat-rows' });
-    for (const [key, label] of [['temperature', t('stat.temperature')], ['efficiency', t('stat.efficiency')], ['frequency', t('stat.gridFrequency')], ['rated', t('stat.ratedPower')], ['alarm', t('stat.alarm')]]) {
-      const row = statRow(label);
+    for (const [key, label, role] of [
+      ['temperature', t('stat.temperature'), 'inverterTemperature'],
+      ['efficiency', t('stat.efficiency'), null],
+      ['frequency', t('stat.gridFrequency'), 'gridFrequency'],
+      ['rated', t('stat.ratedPower'), null],
+      ['alarm', t('stat.alarm'), 'inverterAlarm'],
+    ]) {
+      const row = statRow(label, role);
       r.inverter.rows[key] = row;
       rowsWrap.appendChild(row.node);
     }
@@ -503,7 +649,7 @@ export class DashboardRenderer {
 
   /* ─────────────────────────── updates ─────────────────────────── */
 
-  update(state, flow) {
+  update(state, flow, kpi) {
     // Remember the latest data: after a layout switch the direction arrows must
     // be redrawn, otherwise they keep the glyphs of the previous geometry.
     this._lastState = state;
@@ -511,11 +657,12 @@ export class DashboardRenderer {
     this._updateHeader(state);
     this._updateFlow(state, flow);
     this._updateBattery(state);
-    this._updateKpi(state, flow);
+    this._updateKpi(kpi);
     this._updateSolar(state);
     this._updateGrid(state);
     this._updatePhases(state);
     this._updateInverter(state);
+    this._updateGenerator(state);
   }
 
   _updateHeader(state) {
@@ -540,6 +687,25 @@ export class DashboardRenderer {
 
     this._setBig(r.nodes.house, formatPower(state.load.power));
     setText(r.nodes.house.sub, isNum(state.load.today) ? t('node.todayEnergy', { v: formatEnergy(state.load.today).value }) : '');
+
+    // A generator appearing or disappearing changes the diagram shape.
+    const hasGen = !!(state.generator && state.generator.relevant);
+    if (hasGen !== this._hasGenerator) {
+      this._hasGenerator = hasGen;
+      this._installFlowLayout(true);
+    } else {
+      // Re-check the geometry on every data event as well. ResizeObserver only
+      // delivers during a rendering opportunity, so a page that is not painting
+      // (a hidden tab, a screenshot in flight) would otherwise keep a layout
+      // that no longer matches its width. The call is a no-op when it matches.
+      this._installFlowLayout();
+    }
+    if (hasGen) {
+      this._setBig(r.nodes.generator, formatPower(state.generator.power));
+      setText(r.nodes.generator.sub, isNum(state.generator.today)
+        ? t('node.todayEnergy', { v: formatEnergy(state.generator.today).value })
+        : (state.generator.running ? t('gen.running') : t('gen.stopped')));
+    }
 
     const soc = state.battery.soc;
     this._setBig(r.nodes.battery, { value: isNum(soc) ? formatNumber(soc, soc % 1 === 0 ? 0 : 1) : DASH, unit: '%' });
@@ -578,19 +744,22 @@ export class DashboardRenderer {
     // source mix
     const mix = flow.mix;
     const segs = r.mixBar.children;
-    const parts = [mix ? mix.pv : 0, mix ? mix.battery : 0, mix ? mix.grid : 0];
+    const parts = [mix ? mix.pv : 0, mix ? mix.generator : 0, mix ? mix.battery : 0, mix ? mix.grid : 0];
     parts.forEach((val, i) => {
       setStyleVar(segs[i], '--w', `${val}%`);
       toggleClass(segs[i], 'is-zero', val < 0.5);
     });
     toggleClass(r.mixBar, 'is-empty', !mix);
 
-    const legendKey = mix ? `${Math.round(mix.pv)}/${Math.round(mix.battery)}/${Math.round(mix.grid)}` : 'none';
+    const legendKey = mix ? `${Math.round(mix.pv)}/${Math.round(mix.generator)}/${Math.round(mix.battery)}/${Math.round(mix.grid)}` : 'none';
     if (this._mixKey !== legendKey) {
       this._mixKey = legendKey;
       r.mixLegend.innerHTML = '';
       if (mix) {
-        for (const [cls, label, val] of [['pv', t('src.solar'), mix.pv], ['batt', t('src.battery'), mix.battery], ['grid', t('src.grid'), mix.grid]]) {
+        for (const [cls, label, val] of [
+          ['pv', t('src.solar'), mix.pv], ['gen', t('src.generator'), mix.generator],
+          ['batt', t('src.battery'), mix.battery], ['grid', t('src.grid'), mix.grid],
+        ]) {
           if (val < 0.5) continue;
           r.mixLegend.appendChild(h('span', { class: `mix-item mix-${cls}` },
             h('i'), `${label} ${Math.round(val)}%`));
@@ -605,7 +774,11 @@ export class DashboardRenderer {
       [pair('solar', 'house'), flow.alloc.pvToLoad, 'solar'],
       [pair('solar', 'battery'), flow.alloc.pvToBattery, 'solar'],
       [pair('solar', 'grid'), flow.alloc.pvToGrid, 'solar'],
+      [pair('generator', 'house'), flow.alloc.generatorToLoad, 'generator'],
+      [pair('generator', 'battery'), flow.alloc.generatorToBattery, 'generator'],
+      [pair('generator', 'grid'), flow.alloc.generatorToGrid, 'generator'],
       [pair('battery', 'house'), flow.alloc.batteryToLoad, 'battery'],
+      [pair('battery', 'grid'), flow.alloc.batteryToGrid, 'battery'],
       [pair('grid', 'house'), flow.alloc.gridToLoad, 'grid'],
       [pair('grid', 'battery'), flow.alloc.gridToBattery, 'grid'],
     ].filter(([, v]) => isNum(v) && v > 0.02);
@@ -662,9 +835,10 @@ export class DashboardRenderer {
     setAttr(b.rows.cycleToday.node, 'hidden', !cy.length);
   }
 
-  _updateKpi(state, flow) {
+  /** @param {Object} kpi values by KPI key, produced by the app for the period */
+  _updateKpi(kpi) {
     for (const { node, num, unit, def } of Object.values(this.r.kpi)) {
-      const v = def.get(state, flow);
+      const v = kpi ? kpi[def.key] : null;
       const f = def.kind === 'percent'
         ? { value: isNum(v) ? formatNumber(v, 0) : DASH, unit: '%' }
         : formatEnergy(v);
@@ -690,10 +864,11 @@ export class DashboardRenderer {
         const meta = h('span', { class: 'string-meta', text: '' });
         const bar = h('span', { class: 'bar-fill' });
         const name = h('span', { class: 'string-name', text: st.key });
-        const node = h('div', { class: 'string-row' },
+        const node = h('div', { class: 'string-row', dataset: { role: `pv${st.key.replace(/\D/g, '')}Power` } },
           h('div', { class: 'string-head' }, name, value),
           h('span', { class: 'bar' }, bar), meta);
         so.strings.push({ node, name, value, meta, bar });
+        this._markInteractive(node);
         this.r.solarStrings.appendChild(node);
       }
     }
@@ -784,10 +959,11 @@ function card(cls, opts = {}, ...children) {
   return h('section', { class: `card ${cls}` }, head, ...children);
 }
 
-function statRow(labelText) {
+function statRow(labelText, role) {
   const label = h('span', { class: 'stat-label', text: labelText });
   const value = h('span', { class: 'stat-value', text: DASH });
-  return { node: h('div', { class: 'stat-row' }, label, value), label, value };
+  const node = h('div', { class: 'stat-row', dataset: role ? { role } : {} }, label, value);
+  return { node, label, value };
 }
 
 function setRow(row, value, kind) {
@@ -820,7 +996,15 @@ function arrowFor(linkKey, dir, layout) {
   const vertical = linkKey === 'solar' || linkKey === 'battery' || (narrow && linkKey === 'load');
   if (linkKey === 'solar') return dir === 'toHub' ? '↓' : '↑';
   if (linkKey === 'battery') return narrow ? (dir === 'toHub' ? '↗' : '↙') : (dir === 'toHub' ? '↑' : '↓');
-  if (linkKey === 'grid') return narrow ? (dir === 'toHub' ? '↖' : '↘') : (dir === 'toHub' ? '→' : '←');
+  if (linkKey === 'grid') {
+    if (narrow) return dir === 'toHub' ? '↖' : '↘';
+    // In the generator layout the grid arrives from the upper left, not the side.
+    return layout === 'wideGen' ? (dir === 'toHub' ? '↘' : '↖') : (dir === 'toHub' ? '→' : '←');
+  }
+  if (linkKey === 'generator') {
+    if (narrow) return dir === 'toHub' ? '↙' : '↗';
+    return dir === 'toHub' ? '↗' : '↙';
+  }
   if (linkKey === 'load') return narrow ? (dir === 'toHub' ? '↑' : '↓') : (dir === 'toHub' ? '←' : '→');
   return vertical ? '↓' : '→';
 }

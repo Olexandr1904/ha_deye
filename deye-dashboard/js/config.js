@@ -8,7 +8,10 @@
  * better set them in configuration.yaml or through the gear icon in the UI.
  */
 
-export const VERSION = '1.0.2';
+import { RANGE_KEYS } from './ranges.js';
+import { LANGUAGES } from './i18n.js';
+
+export const VERSION = '1.1.0';
 
 export const STORAGE_KEY = 'deye-dashboard:user-config:v1';
 export const LEARN_KEY = 'deye-dashboard:learned:v1';
@@ -118,6 +121,12 @@ export const ROLES = [
     hints: { any: [['(today|daily).*battery.*charg', 10], ['battery.*charg.*(today|daily)', 10]], not: ['discharg', 'total', 'month', 'year'] } },
   { key: 'batteryDischargeToday', group: 'battery', label: 'Battery discharged today', kind: 'energy',
     hints: { any: [['(today|daily).*battery.*discharg', 10], ['battery.*discharg.*(today|daily)', 10]], not: ['total', 'month', 'year'] } },
+  // Some Deye firmwares never populate the daily battery registers while the
+  // lifetime ones count correctly, so these are the fallback for period totals.
+  { key: 'batteryChargeTotal', group: 'battery', label: 'Battery charged total', kind: 'energy', optional: true,
+    hints: { any: [['total.*battery.*charg', 10], ['battery.*charg.*total', 10]], not: ['discharg', 'today', 'daily', 'month', 'year'] } },
+  { key: 'batteryDischargeTotal', group: 'battery', label: 'Battery discharged total', kind: 'energy', optional: true,
+    hints: { any: [['total.*battery.*discharg', 10], ['battery.*discharg.*total', 10]], not: ['today', 'daily', 'month', 'year'] } },
 
   // ────────────────────────────── GRID ───────────────────────────────
   { key: 'gridPower', group: 'grid', label: 'Grid power (+/-)', kind: 'power', optional: false,
@@ -246,10 +255,15 @@ export const DEFAULT_CONFIG = {
     load: 'normal',  // normal | inverted
     pv: 'normal',
   },
-  animations: true,
+  /**
+   * Flow animation: 'auto' respects the system "reduce motion" preference,
+   * 'on' animates regardless, 'off' never animates.
+   */
+  animations: 'auto',
   /** Phases card: auto (when data exists) | always | never */
   showPhases: 'auto',
-  chart: { defaultRange: 'today' },
+  /** Chart: default period — day | week | month | year | custom. */
+  chart: { defaultRange: 'day' },
   entities: Object.fromEntries(ROLES.map((r) => [r.key, null])),
 };
 
@@ -267,9 +281,28 @@ export function mergeConfig(...layers) {
       }
     }
   }
-  // entities: treat empty strings as "unset"
+  // Migrate values stored by older versions so an existing browser keeps working.
+  if (out.animations === true) out.animations = 'auto';
+  if (out.animations === false) out.animations = 'off';
+  const legacyRange = { today: 'day', '7d': 'week', '30d': 'month' }[out.chart.defaultRange];
+  if (legacyRange) out.chart.defaultRange = legacyRange;
+
+  // Anything unrecognised is replaced by the default rather than carried into
+  // the rest of the code: these values arrive from localStorage and from
+  // hand-written YAML, so they cannot be assumed to be one of ours.
+  const oneOf = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
+  out.animations = oneOf(out.animations, ['auto', 'on', 'off'], 'auto');
+  out.showPhases = oneOf(out.showPhases, ['auto', 'always', 'never'], 'auto');
+  out.chart.defaultRange = oneOf(out.chart.defaultRange, RANGE_KEYS, 'day');
+  out.language = oneOf(out.language, ['auto', ...LANGUAGES.map((l) => l.code)], DEFAULT_CONFIG.language);
+  out.powerDirection.battery = oneOf(out.powerDirection.battery, ['auto', 'charge_positive', 'discharge_positive'], 'auto');
+  out.powerDirection.grid = oneOf(out.powerDirection.grid, ['auto', 'import_positive', 'export_positive'], 'auto');
+
+  // entities: only known roles, and an empty string means "unset"
   for (const [k, v] of Object.entries(out.entities)) {
+    if (!(k in DEFAULT_CONFIG.entities)) { delete out.entities[k]; continue; }
     if (typeof v === 'string' && v.trim() === '') out.entities[k] = null;
+    else if (v !== null && typeof v !== 'string') out.entities[k] = null;
   }
   return out;
 }

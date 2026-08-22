@@ -30,6 +30,7 @@
   --load-color: #dfe7f4;
   --inverter-color: #a98bff;
   --phase-color: #34d3e2;
+  --generator-color: #ff7a59;
   --accent-color: #ffb020;
   --ok-color: #2edd8b;
   --warn-color: #ffa62e;
@@ -177,6 +178,24 @@
   50% { box-shadow: 0 0 0 5px rgba(255, 255, 255, .05); }
 }
 
+/* ────────────────── historical mode banner ────────────────── */
+
+.above-grid { display: flex; flex-direction: column; gap: 8px; }
+
+.history-bar {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 14px;
+  border-radius: var(--radius-xs);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 34%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 9%, transparent);
+  color: var(--text-0);
+}
+.history-bar[hidden] { display: none; }
+.history-icon { display: grid; place-items: center; color: var(--accent-color); flex: none; }
+.history-label { font-size: 12px; font-weight: 700; letter-spacing: .12em; }
+.history-hint { flex: 1 1 auto; font-size: 11.5px; color: var(--text-2); }
+.history-now { padding: 5px 12px; }
+
 /* ─────────────────────────── notices ─────────────────────────── */
 
 .notices { display: flex; flex-direction: column; gap: 8px; }
@@ -230,6 +249,19 @@
 .kpi-row { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .detail-row { grid-template-columns: repeat(auto-fit, minmax(258px, 1fr)); }
 
+/* A period strictly in the past has no instantaneous values, so everything
+   built from them is hidden rather than shown empty — including the battery and
+   grid cards, which would otherwise print live readings under a banner saying
+   live values are unavailable. */
+.app[data-mode="history"] .card-flow,
+.app[data-mode="history"] .card-battery,
+.app[data-mode="history"] .card-grid,
+.app[data-mode="history"] .detail-row { display: none; }
+
+/* With the live cards gone the chart owns the page instead of leaving a hole. */
+.app[data-mode="history"] .kpi-row { grid-row: 1; }
+.app[data-mode="history"] .card-chart { grid-row: 2; }
+
 /* ─────────────────────────── cards ─────────────────────────── */
 
 .card {
@@ -267,6 +299,7 @@
 .tone-house { --tone: var(--load-color); }
 .tone-inverter { --tone: var(--inverter-color); }
 .tone-phase { --tone: var(--phase-color); }
+.tone-generator { --tone: var(--generator-color); }
 .tone-accent { --tone: var(--accent-color); }
 
 .section-label {
@@ -316,6 +349,22 @@
 .stat-label { color: var(--text-2); }
 .stat-value { color: var(--text-0); font-weight: 550; white-space: nowrap; }
 
+/* Values that can be drilled into. Only roles with a mapped entity get the
+   affordance — setInteractiveRoles() adds the class. */
+[data-role].is-clickable { cursor: pointer; }
+.stat-row.is-clickable:hover, .string-row.is-clickable:hover, .phase-row.is-clickable:hover {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+  border-radius: 8px;
+}
+.kpi.is-clickable:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.flow-node.is-clickable:hover .node-body { border-color: color-mix(in srgb, var(--tone) 55%, transparent); }
+[data-role].is-clickable:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
 /* bars */
 .bar {
   display: block; height: 5px; border-radius: 3px;
@@ -345,10 +394,21 @@
 :host::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .1); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
 :host::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .2); background-clip: content-box; }
 
+/* Animation control. 'auto' follows the system preference, 'on' overrides it
+   deliberately, 'off' disables animation regardless. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  .deye-root:not([data-anim="on"]) *,
+  .deye-root:not([data-anim="on"]) *::before,
+  .deye-root:not([data-anim="on"]) *::after {
     animation-duration: .001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: .001ms !important;
   }
+}
+.deye-root[data-anim="off"] *,
+.deye-root[data-anim="off"] *::before,
+.deye-root[data-anim="off"] *::after {
+  animation-duration: .001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .001ms !important;
 }

@@ -50,6 +50,12 @@ export class HAClient {
   getState(entityId) { return this.getStates()[entityId] || null; }
   listEntityIds() { return Object.keys(this.getStates()); }
 
+  /** Base URL of the Home Assistant instance, for links out of the panel. */
+  get baseUrl() {
+    if (this.mode === 'standalone') return this._baseUrl || '';
+    return '';   // panel mode is same-origin, so relative links work
+  }
+
   get locale() {
     return (this._hass && this._hass.locale && this._hass.locale.language) || undefined;
   }

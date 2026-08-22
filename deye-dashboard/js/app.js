@@ -5,7 +5,7 @@
  *   HA state_changed -> EntityManager -> EnergyModel -> PowerFlow -> DashboardRenderer
  */
 
-import { mergeConfig, loadUserConfig, saveUserConfig, VERSION } from './config.js';
+import { mergeConfig, loadUserConfig, saveUserConfig, VERSION, ROLE_BY_KEY } from './config.js';
 import { HAClient, STATUS } from './ha-client.js';
 import { DemoClient } from './demo.js';
 import { EntityManager } from './entity-manager.js';
@@ -13,10 +13,12 @@ import { EnergyModel } from './energy-model.js';
 import { computeFlow } from './power-flow.js';
 import { DashboardRenderer } from './renderer.js';
 import { SettingsUI } from './settings-ui.js';
+import { DetailDialog } from './detail-dialog.js';
 import { TimeSeriesChart, DailyBarChart } from './charts.js';
-import { fetchPowerHistory, fetchDailyEnergy, clearHistoryCache } from './history.js';
+import { fetchPowerSeries, fetchEnergyBars, fetchEnergyTotals, clearHistoryCache, explainEmpty } from './history.js';
 import { autoDetect } from './discovery.js';
-import { setDebug, log, warn, h, isNum, startOfToday, formatEnergy, formatPower, rafThrottle } from './utils.js';
+import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js';
+import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js';
 import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js';
 
 const KEY_ROLES = ['pvPower', 'batterySoc', 'batteryPower', 'gridPower', 'loadPower'];
@@ -29,12 +31,18 @@ export class DeyeDashboard {
     this.panelConfig = opts.panelConfig || null;
     this.config = mergeConfig(this.panelConfig, loadUserConfig());
     // URL flags for debugging and deep links:
-    //   ?deye_debug=1 logs · ?deye_range=7d range · ?deye_settings=1 open settings
+    //   ?deye_debug=1 logs · ?deye_range=week range · ?deye_settings=1 open settings
     //   ?deye_noauto=1 skip entity auto-detection
     this.flags = readFlags();
     if (this.flags.debug) this.config.debug = true;
     setDebug(this.config.debug);
-    this.range = this.flags.range || this.config.chart.defaultRange || 'today';
+    this.view = defaultView(this.flags.range || this.config.chart.defaultRange || 'day');
+    // True while the selection still means "the current period". The anchor is a
+    // fixed date, so at midnight today's view silently becomes yesterday's — the
+    // dashboard would slide into historical mode on its own and stay there.
+    this._followNow = true;
+    this.mode = 'live';
+    this.periodKpi = null;
     this._lastChartFetch = 0;
     this._destroyed = false;
     this._scheduleUpdate = rafThrottle(() => this._applyUpdate());
@@ -51,16 +59,17 @@ export class DeyeDashboard {
 
     this.renderer = new DashboardRenderer(container, {
       title: this.config.title,
-      range: this.range,
       showPhases: this.config.showPhases,
       onOpenSettings: () => this.settings.open('entities'),
-      onRangeChange: (r) => this.setRange(r),
+      onViewChange: (v) => this.setView(v),
+      onNow: () => this.setView({ ...this.view, anchor: startOfDay(new Date()) }),
+      onOpenDetail: (role) => this.detail.open(role),
       onToggleMenu: () => this.opts.onToggleMenu && this.opts.onToggleMenu(),
       onToggleLanguage: () => this.cycleLanguage(),
     });
     this.renderer.mount();
-    this.renderer.setRange(this.range);
     this.renderer.observeFlowResize();
+    this.renderer.setAnimations(this.config.animations);
 
     this.client = demo ? new DemoClient() : new HAClient();
     this.entityManager = new EntityManager(this.client, this.config);
@@ -75,7 +84,10 @@ export class DeyeDashboard {
       onDemoToggle: () => this.opts.onDemoToggle && this.opts.onDemoToggle(),
       onSetLanguage: (code) => this.applyLanguage(code, { reopenSettings: 'options' }),
     });
-    this.settings.mount(this.root);
+    this.settings.mount(this.container);
+
+    this.detail = new DetailDialog({ client: this.client, getConfig: () => this.config });
+    this.detail.mount(this.container);
 
     this.client.onStatus((st) => {
       this.renderer.setConnection(st);
@@ -120,7 +132,8 @@ export class DeyeDashboard {
 
     this.entityManager.start();
     this._applyUpdate();
-    this._loadChart(true);
+    this._refreshInteractive();
+    this._loadPeriod(true);
 
     if (!this.entityManager.mappedCount) this._showOnboarding();
     else this.renderer.hideOnboarding();
@@ -148,6 +161,7 @@ export class DeyeDashboard {
 
   _applyUpdate() {
     if (this._destroyed) return;
+    if (this._followCurrentPeriod()) { this._loadPeriod(true); return; }
     const values = this.entityManager.values;
     this.state = this.model.build(values, {
       lastUpdate: this.entityManager.lastUpdate,
@@ -155,12 +169,46 @@ export class DeyeDashboard {
       demo: this.client.mode === 'demo',
     });
     this.flow = computeFlow(this.state);
-    this.renderer.update(this.state, this.flow);
+    this.renderer.update(this.state, this.flow, this._kpiValues());
     this.renderer.setNotices(this._notices());
 
-    // The "Today" chart refreshes at most once every two minutes, and only when
-    // new data actually arrived — never on a timer of its own.
-    if (this.range === 'today' && Date.now() - this._lastChartFetch > CHART_REFRESH_MS) this._loadChart();
+    // A period that contains "now" refreshes at most once every two minutes, and
+    // only when new data actually arrived — never on a timer of its own.
+    if (this.mode === 'live' && Date.now() - this._lastChartFetch > CHART_REFRESH_MS) this._loadPeriod();
+  }
+
+  /**
+   * KPI values for the selected period. Today's numbers come from the live
+   * daily counters; any other period comes from long-term statistics.
+   */
+  _kpiValues() {
+    if (!usesLiveCounters(this.view)) return this.periodKpi;
+    const st = this.state;
+    // A daily register that never leaves zero is a known Deye quirk, so where
+    // statistics for the same quantity say otherwise, they win.
+    const p = this.periodKpi || {};
+    const live = (value, key) => preferMovedCounter(value, p[key]);
+    return {
+      solar: live(st.pv.today, 'solar'),
+      consumption: live(st.load.today, 'consumption'),
+      gridImport: live(st.grid.todayImport, 'gridImport'),
+      gridExport: live(st.grid.todayExport, 'gridExport'),
+      generator: st.generator.relevant ? live(st.generator.today, 'generator') : null,
+      batteryCharged: live(st.battery.chargeToday, 'batteryCharged'),
+      batteryUsed: live(st.battery.dischargeToday, 'batteryUsed'),
+      selfSufficiency: this.flow.selfSufficiency,
+    };
+  }
+
+  /**
+   * Only roles with a mapped entity and a numeric history may open the sensor
+   * dialog: a text sensor has nothing to plot.
+   */
+  _refreshInteractive() {
+    const mapped = new Set(Object.entries(this.config.entities)
+      .filter(([k, v]) => v && ROLE_BY_KEY[k] && ROLE_BY_KEY[k].kind !== 'text')
+      .map(([k]) => k));
+    this.renderer.setInteractiveRoles(mapped);
   }
 
   _notices() {
@@ -238,9 +286,11 @@ export class DeyeDashboard {
     this.renderer.opts.showPhases = this.config.showPhases;
     clearHistoryCache();
     this._lastChartFetch = 0;
+    this.renderer.setAnimations(this.config.animations);
+    this._refreshInteractive();
     if (this.entityManager.mappedCount) this.renderer.hideOnboarding();
     this._applyUpdate();
-    this._loadChart(true);
+    this._loadPeriod(true);
     log('configuration applied', persist ? '(saved)' : '');
   }
 
@@ -268,12 +318,13 @@ export class DeyeDashboard {
   /** Rebuilds the whole view (used after a language change). */
   _remount() {
     this.renderer.mount();
-    this.renderer.setRange(this.range);
     this.renderer.observeFlowResize();
+    this.renderer.setAnimations(this.config.animations);
     // A fresh DOM starts at "connecting"; the client only reports on change.
     this.renderer.setConnection(this.client.status);
+    this._refreshInteractive();
     this._applyUpdate();
-    this._loadChart(true);
+    this._loadPeriod(true);
   }
 
   /* ─────────────────────────── onboarding ─────────────────────────── */
@@ -299,93 +350,133 @@ export class DeyeDashboard {
     ]);
   }
 
-  /* ─────────────────────────── charts ─────────────────────────── */
+  /* ─────────────────────── period, chart and KPI ─────────────────────── */
 
-  setRange(range) {
-    if (this.range === range) return;
-    this.range = range;
-    this.renderer.setRange(range);
-    this._loadChart(true);
+  /** Applies a new time selection: mode, header, chart and KPI. */
+  setView(view, { follow } = {}) {
+    this.view = view;
+    this._followNow = follow !== undefined ? follow : periodBounds(view).includesNow;
+    this._loadPeriod(true);
   }
 
-  async _loadChart(force = false) {
-    const host = this.renderer.r.chartHost;
-    if (!host) return;
-    // A request that arrives mid-fetch must not be dropped: remember it and
-    // replay it when the current one finishes, otherwise the highlighted tab
-    // and the drawn chart disagree until the next data event.
-    if (this._chartBusy) { this._chartQueued = { range: this.range, force: true }; return; }
-    this._chartBusy = true;
-    this.renderer.setChartBusy(true);
+  /**
+   * Re-anchors a "current period" selection when the calendar moved on. Called
+   * from every update, so the panel survives midnight (and a laptop waking up
+   * days later) without anyone pressing Now.
+   */
+  _followCurrentPeriod() {
+    if (!this._followNow) return false;
+    // A custom interval has fixed ends: moving its anchor would not bring the
+    // present into it, and re-checking forever is how a render loop hangs.
+    if (this.view.range === 'custom') return false;
+    if (periodBounds(this.view).includesNow) return false;
+    const next = { ...this.view, anchor: startOfDay(new Date()) };
+    if (!periodBounds(next).includesNow) return false;   // never adopt a view that does not help
+    this.view = next;
+    log('the calendar moved on — re-anchoring the view to the current period');
+    return true;
+  }
+
+  /**
+   * Loads everything the selected period needs. `includesNow` decides the mode:
+   * a period containing the present keeps the live diagram and cards, a period
+   * strictly in the past hides them.
+   */
+  async _loadPeriod(force = false) {
+    const bounds = periodBounds(this.view);
+    this.mode = bounds.includesNow ? 'live' : 'history';
+    this.renderer.setView(this.view, bounds.step);
+    this.renderer.setMode(this.mode, this.view);
     this._lastChartFetch = Date.now();
+
+    // A request arriving mid-fetch is remembered, never dropped.
+    if (this._periodBusy) { this._periodQueued = true; return; }
+    this._periodBusy = true;
+    this.renderer.setChartBusy(true);
     try {
-      if (this.range === 'today') await this._loadTodayChart(host, force);
-      else await this._loadDailyChart(host, this.range === '7d' ? 7 : 30, force);
+      await this._loadChart(bounds, force);
+      await this._loadPeriodKpi(bounds);
+      this._applyUpdate();
     } catch (e) {
-      warn('could not load the chart:', e);
+      warn('could not load the period:', e);
     } finally {
-      this._chartBusy = false;
+      this._periodBusy = false;
       this.renderer.setChartBusy(false);
-      const queued = this._chartQueued;
-      this._chartQueued = null;
-      if (queued && queued.range !== this.range) this._loadChart(true);
-      else if (queued) this._loadChart(queued.force);
+      if (this._periodQueued) { this._periodQueued = false; this._loadPeriod(true); }
     }
   }
 
-  async _loadTodayChart(host, force) {
+  async _loadChart(bounds, force) {
+    const host = this.renderer.r.chartHost;
+    if (!host) return;
+    if (bounds.step === 'power') await this._loadPowerChart(host, bounds, force);
+    else await this._loadEnergyChart(host, bounds, force);
+  }
+
+  /** Instantaneous power: signed lines from the history API. */
+  async _loadPowerChart(host, bounds, force) {
     if (!(this.chart instanceof TimeSeriesChart) || force) {
       if (this.chart) this.chart.destroy();
       this.chart = new TimeSeriesChart(host, { height: chartHeight() });
+      this._chartBucket = null;
     }
     const ent = this.config.entities;
-    const ids = [ent.pvPower, ent.loadPower, ent.batteryPower, ent.gridPower].filter(Boolean);
-    const from = startOfToday();
-    const to = new Date();
-    this.chart.setRange(from, to);
-    if (!ids.length) { this.chart.setSeries([]); return; }
+    const withGen = !!(this.state && this.state.generator && this.state.generator.relevant);
+    const defs = [
+      [ent.pvPower, 'pv', t('src.solar'), 'var(--solar-color)', { area: true, width: 2.2 }],
+      [withGen ? ent.generatorPower : null, 'generator', t('src.generator'), 'var(--generator-color)', {}],
+      [ent.loadPower, 'load', t('src.house'), 'var(--load-color)', {}],
+      [ent.batteryPower, 'battery', t('src.battery'), 'var(--battery-color)',
+        { sign: this.model.batterySign === 'charge_positive' ? 1 : -1, signed: true }],
+      [ent.gridPower, 'grid', t('src.grid'), 'var(--grid-color)',
+        { sign: this.model.gridSign === 'import_positive' ? 1 : -1, signed: true }],
+    ].filter(([id]) => id);
 
-    const kinds = {};
-    for (const id of ids) kinds[id] = 'power';
-    const data = await fetchPowerHistory(this.client, ids, kinds, from, to);
+    this.chart.setRange(bounds.from, bounds.to);
+    if (!defs.length) { this.chart.setSeries([]); return; }
+    this.chart.setEmptyText(t('chart.noData'));
 
-    const batterySign = this.model.batterySign === 'charge_positive' ? 1 : -1;
-    const gridSign = this.model.gridSign === 'import_positive' ? 1 : -1;
+    const ids = defs.map(([id]) => id);
+    const kinds = Object.fromEntries(ids.map((id) => [id, 'power']));
+    const data = await fetchPowerSeries(this.client, ids, bounds.from, bounds.to, { kinds });
 
+    if (!ids.some((id) => (data[id] || []).length)) await this._explainEmptyChart(bounds, ids);
     const series = [];
-    const add = (id, key, label, color, opts = {}) => {
+    for (const [id, key, label, color, opts] of defs) {
       const pts = data[id];
-      if (!pts || !pts.length) return;
-      const scaled = opts.sign ? pts.map(([t, v]) => [t, v * opts.sign]) : pts;
+      if (!pts || !pts.length) continue;
+      const scaled = opts.sign ? pts.map(([ts, v]) => [ts, v * opts.sign]) : pts;
       const last = scaled[scaled.length - 1][1];
       series.push({
         key, label, color, points: scaled, area: !!opts.area, signed: !!opts.signed,
         width: opts.width || 2,
         summary: `${formatPower(last, { signed: opts.signed }).value} ${formatPower(last).unit}`,
       });
-    };
-    add(ent.pvPower, 'pv', t('src.solar'), 'var(--solar-color)', { area: true, width: 2.2 });
-    add(ent.loadPower, 'load', t('src.house'), 'var(--load-color)', {});
-    add(ent.batteryPower, 'battery', t('src.battery'), 'var(--battery-color)', { sign: batterySign, signed: true });
-    add(ent.gridPower, 'grid', t('src.grid'), 'var(--grid-color)', { sign: gridSign, signed: true });
+    }
     this.chart.setSeries(series);
   }
 
-  async _loadDailyChart(host, days, force) {
-    if (!(this.chart instanceof DailyBarChart) || force) {
+  /** Energy per bucket: grouped bars from long-term statistics. */
+  async _loadEnergyChart(host, bounds, force) {
+    const bucket = bounds.step;   // 'day' | 'month'
+    if (!(this.chart instanceof DailyBarChart) || force || this._chartBucket !== bucket) {
       if (this.chart) this.chart.destroy();
-      this.chart = new DailyBarChart(host, { height: chartHeight() });
+      this.chart = new DailyBarChart(host, { height: chartHeight(), bucket });
+      this._chartBucket = bucket;
     }
     const ent = this.config.entities;
+    const withGen = !!(this.state && this.state.generator && this.state.generator.relevant);
     const defs = [
       [ent.pvToday, 'pv', t('src.solar'), 'var(--solar-color)'],
+      [withGen ? ent.generatorToday : null, 'generator', t('src.generator'), 'var(--generator-color)'],
       [ent.loadToday, 'load', t('src.house'), 'var(--load-color)'],
       [ent.gridImportToday, 'import', t('series.import'), 'var(--grid-color)'],
       [ent.gridExportToday, 'export', t('series.export'), 'var(--battery-color)'],
     ].filter(([id]) => id);
     if (!defs.length) { this.chart.setSeries([]); return; }
+    this.chart.setEmptyText(t('chart.noData'));
 
-    const data = await fetchDailyEnergy(this.client, defs.map(([id]) => id), days);
+    const data = await fetchEnergyBars(this.client, defs.map(([id]) => id), bounds.from, bounds.to, bucket);
     const series = [];
     for (const [id, key, label, color] of defs) {
       const rows = data[id];
@@ -398,15 +489,60 @@ export class DeyeDashboard {
       });
     }
     this.chart.setSeries(series);
-    if (!series.length) {
-      warn('statistics unavailable — the sensors probably lack state_class / long-term statistics');
+    if (!series.length) await this._explainEmptyChart(bounds, defs.map(([id]) => id));
+  }
+
+  /**
+   * Names the reason the chart came back empty, because the remedy differs: a
+   * sensor without long-term statistics needs a `state_class`, an old day needs
+   * the Month view, and a period before the data simply has nothing.
+   */
+  async _explainEmptyChart(bounds, ids) {
+    const reason = await explainEmpty(this.client, ids, bounds.step);
+    this.chart.setEmptyText(reason.text, reason.hint);
+  }
+
+  /**
+   * KPI for a period that cannot use today's live counters. Self-sufficiency is
+   * defined differently here on purpose: over a period it is the share of
+   * consumption that was not bought from the grid.
+   */
+  async _loadPeriodKpi(bounds) {
+    const ent = this.config.entities;
+    // Each tile may have a daily counter and a lifetime counter. Both are asked
+    // for, because a period total from statistics is only as good as the sensor
+    // behind it, and the two disagree on some firmwares.
+    const map = {
+      solar: [ent.pvToday, ent.pvTotal], consumption: [ent.loadToday, ent.loadTotal],
+      gridImport: [ent.gridImportToday], gridExport: [ent.gridExportToday],
+      generator: [ent.generatorToday, ent.generatorTotal],
+      batteryCharged: [ent.batteryChargeToday, ent.batteryChargeTotal],
+      batteryUsed: [ent.batteryDischargeToday, ent.batteryDischargeTotal],
+    };
+    const ids = [...new Set(Object.values(map).flat().filter(Boolean))];
+    const period = bounds.step === 'power' ? 'day' : bounds.step;
+    const totals = ids.length ? await fetchEnergyTotals(this.client, ids, bounds.from, bounds.to, period) : {};
+
+    const kpi = {};
+    for (const [key, [dailyId, totalId]] of Object.entries(map)) {
+      const daily = dailyId && isNum(totals[dailyId]) ? totals[dailyId] : null;
+      const total = totalId && isNum(totals[totalId]) ? totals[totalId] : null;
+      kpi[key] = preferMovedCounter(daily, total);
     }
+    // Same relevance rule as the live tiles: an installation whose generator
+    // sensors read zero should not grow a GENERATOR tile for every past period.
+    if (!isNum(kpi.generator) || kpi.generator <= 0.01) kpi.generator = null;
+    kpi.selfSufficiency = isNum(kpi.consumption) && kpi.consumption > 0 && isNum(kpi.gridImport)
+      ? clamp(((kpi.consumption - kpi.gridImport) / kpi.consumption) * 100, 0, 100)
+      : null;
+    this.periodKpi = kpi;
   }
 
   destroy() {
     this._destroyed = true;
     if (this.entityManager) this.entityManager.stop();
     if (this.chart) this.chart.destroy();
+    if (this.detail) this.detail.close();
     if (this.client) this.client.destroy && this.client.destroy();
   }
 }
@@ -420,7 +556,7 @@ function readFlags() {
       debug: p.get('deye_debug') === '1',
       noauto: p.get('deye_noauto') === '1',
       settings: p.get('deye_settings'),
-      range: ['today', '7d', '30d'].includes(range) ? range : null,
+      range: ['day', 'week', 'month', 'year', 'custom'].includes(range) ? range : null,
     };
   } catch (e) {
     return {};

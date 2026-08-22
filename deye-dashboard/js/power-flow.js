@@ -2,12 +2,13 @@
  * power-flow.js — flow directions and energy distribution.
  *
  * The diagram is a star around the inverter (like Deye Cloud):
- *   PV / GRID / BATTERY  ⇄  INVERTER  ⇄  HOUSE
+ *   PV / GENERATOR / GRID / BATTERY  <->  INVERTER  <->  HOUSE
  * Direction and power of each link are measured quantities.
  *
- * On top of that the DISTRIBUTION is derived (pv->house, pv->battery, grid->house...).
- * That part is calculated, not measured: it follows from the power balance and is
- * shown in a separate block, so nothing derived is passed off as measured.
+ * On top of that the DISTRIBUTION is derived (pv->house, generator->battery,
+ * grid->house...). That part is calculated, not measured: it follows from the
+ * power balance and is shown in a separate block, so nothing derived is passed
+ * off as measured.
  */
 
 import { isNum, clamp } from './utils.js';
@@ -17,19 +18,20 @@ const IDLE_KW = 0.015;
 
 export function computeFlow(state) {
   const pv = pos(state.pv.power);
+  const gen = pos(state.generator && state.generator.relevant ? state.generator.power : null);
   const bat = isNum(state.battery.power) ? state.battery.power : null;   // + = charging
   const grid = isNum(state.grid.power) ? state.grid.power : null;        // + = import
   const load = pos(state.load.power);
 
   const batCharge = bat !== null ? Math.max(0, bat) : null;
   const batDischarge = bat !== null ? Math.max(0, -bat) : null;
-  const gridImport = grid !== null ? Math.max(0, grid) : null;
   const gridExport = grid !== null ? Math.max(0, -grid) : null;
 
   const scale = Math.max(1, state.meta.scaleKw || 1);
 
   const links = {
     solar: link(pv, 'toHub', scale),
+    generator: link(gen, 'toHub', scale),
     battery: bat === null ? link(null, 'toHub', scale)
       : link(Math.abs(bat), bat > 0 ? 'fromHub' : 'toHub', scale),
     grid: grid === null ? link(null, 'toHub', scale)
@@ -37,9 +39,10 @@ export function computeFlow(state) {
     load: link(load, 'fromHub', scale),
   };
 
-  /* ── distribution (greedy: self-consumption first) ── */
+  /* ── distribution: self-consumption first, grid last ── */
   const alloc = {
     pvToLoad: null, pvToBattery: null, pvToGrid: null,
+    generatorToLoad: null, generatorToBattery: null, generatorToGrid: null,
     batteryToLoad: null, batteryToGrid: null,
     gridToLoad: null, gridToBattery: null,
   };
@@ -49,50 +52,69 @@ export function computeFlow(state) {
   // instead of having power attributed to them.
   if (load !== null) {
     let restPv = pv || 0;
-    if (pv !== null) {
-      alloc.pvToLoad = Math.min(restPv, load);
-      restPv -= alloc.pvToLoad;
-    }
+    let restGen = gen || 0;
+    let uncovered = load;
 
-    if (batCharge !== null) {
-      if (pv !== null) {
-        alloc.pvToBattery = Math.min(restPv, batCharge);
-        restPv -= alloc.pvToBattery;
-      }
-      if (grid !== null) alloc.gridToBattery = Math.max(0, batCharge - (alloc.pvToBattery || 0));
+    if (pv !== null) {
+      alloc.pvToLoad = Math.min(restPv, uncovered);
+      restPv -= alloc.pvToLoad;
+      uncovered -= alloc.pvToLoad;
     }
-    if (gridExport !== null && pv !== null) {
-      alloc.pvToGrid = Math.min(restPv, gridExport);
+    if (gen !== null) {
+      alloc.generatorToLoad = Math.min(restGen, uncovered);
+      restGen -= alloc.generatorToLoad;
+      uncovered -= alloc.generatorToLoad;
     }
     if (batDischarge !== null) {
-      alloc.batteryToLoad = Math.min(batDischarge, Math.max(0, load - (alloc.pvToLoad || 0)));
-      if (gridExport !== null) alloc.batteryToGrid = Math.max(0, gridExport - (alloc.pvToGrid || 0));
+      alloc.batteryToLoad = Math.min(batDischarge, uncovered);
+      uncovered -= alloc.batteryToLoad;
     }
-    const covered = (alloc.pvToLoad || 0) + (alloc.batteryToLoad || 0);
-    if (grid !== null) alloc.gridToLoad = Math.max(0, load - covered);
+    if (grid !== null) alloc.gridToLoad = Math.max(0, uncovered);
+
+    if (batCharge !== null) {
+      let toCharge = batCharge;
+      if (pv !== null) { alloc.pvToBattery = Math.min(restPv, toCharge); restPv -= alloc.pvToBattery; toCharge -= alloc.pvToBattery; }
+      if (gen !== null) { alloc.generatorToBattery = Math.min(restGen, toCharge); restGen -= alloc.generatorToBattery; toCharge -= alloc.generatorToBattery; }
+      if (grid !== null) alloc.gridToBattery = Math.max(0, toCharge);
+    }
+    if (gridExport !== null) {
+      // Same cascade as the load and the charge passes. Without a generator
+      // term the whole export used to land on the battery — even while it was
+      // charging, which is impossible and read as a wrong polarity.
+      let rest = gridExport;
+      if (pv !== null) { alloc.pvToGrid = Math.min(restPv, rest); restPv -= alloc.pvToGrid; rest -= alloc.pvToGrid; }
+      if (gen !== null) { alloc.generatorToGrid = Math.min(restGen, rest); restGen -= alloc.generatorToGrid; rest -= alloc.generatorToGrid; }
+      if (batDischarge) alloc.batteryToGrid = Math.max(0, rest);
+    }
   }
 
   /* ── source mix covering the load ── */
   let mix = null;
   if (load !== null && load > IDLE_KW) {
-    const fromPv = alloc.pvToLoad || 0;
-    const fromBat = alloc.batteryToLoad || 0;
-    const fromGrid = alloc.gridToLoad || 0;
-    const total = fromPv + fromBat + fromGrid;
+    const parts = {
+      pv: alloc.pvToLoad || 0,
+      generator: alloc.generatorToLoad || 0,
+      battery: alloc.batteryToLoad || 0,
+      grid: alloc.gridToLoad || 0,
+    };
+    const total = parts.pv + parts.generator + parts.battery + parts.grid;
     if (total > 0) {
       mix = {
-        pv: (fromPv / total) * 100,
-        battery: (fromBat / total) * 100,
-        grid: (fromGrid / total) * 100,
+        pv: (parts.pv / total) * 100,
+        generator: (parts.generator / total) * 100,
+        battery: (parts.battery / total) * 100,
+        grid: (parts.grid / total) * 100,
       };
     }
   }
 
-  const selfSufficiency = mix ? clamp(mix.pv + mix.battery, 0, 100) : null;
+  // Everything that did not come from the grid. A generator burns fuel, but it
+  // is still not a purchase from the utility, which is what this number means.
+  const selfSufficiency = mix ? clamp(100 - mix.grid, 0, 100) : null;
 
   return {
     links, alloc, mix, selfSufficiency,
-    parts: { pv, batCharge, batDischarge, gridImport, gridExport, load },
+    parts: { pv, gen, batCharge, batDischarge, gridImport: grid !== null ? Math.max(0, grid) : null, gridExport, load },
   };
 }
 

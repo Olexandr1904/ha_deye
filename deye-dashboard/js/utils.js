@@ -123,6 +123,22 @@ export function normalizeValue(kind, rawState, rawUnit) {
   return { value: num, unit: canonical || unit, assumed: !!unit };
 }
 
+/**
+ * Two counters that should agree on the same energy, one of which may be dead.
+ *
+ * Deye firmwares differ: on some, "battery charged today" never leaves zero
+ * while the lifetime counter increments correctly. When they disagree the larger
+ * one is the real number — a broken register reads zero, it does not invent
+ * energy — so this prefers the daily counter and falls back to the lifetime one.
+ */
+export function preferMovedCounter(daily, total) {
+  const d = isNum(daily) ? daily : null;
+  const t = isNum(total) ? total : null;
+  if (d === null) return t;
+  if (t === null) return d;
+  return t > d ? t : d;
+}
+
 /* ───────────────────────────── time ───────────────────────────── */
 
 export function fmtClock(date = new Date(), withSeconds = true) {
@@ -148,6 +164,14 @@ export function fmtDayShort(date) {
     return new Intl.DateTimeFormat(localeTag(), { day: 'numeric', month: 'short' }).format(date);
   } catch (e) {
     return date.toISOString().slice(5, 10);
+  }
+}
+
+export function fmtMonthShort(date) {
+  try {
+    return new Intl.DateTimeFormat(localeTag(), { month: 'short' }).format(date);
+  } catch (e) {
+    return date.toISOString().slice(5, 7);
   }
 }
 

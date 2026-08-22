@@ -21,6 +21,11 @@
 .link-battery { --link-color: var(--battery-color); }
 .link-grid { --link-color: var(--grid-color); }
 .link-load { --link-color: var(--load-color); }
+.link-generator { --link-color: var(--generator-color); }
+/* The UA stylesheet's [hidden] rule does not apply to SVG, so a link that the
+   current layout does not use would stay in the render and accessibility trees
+   with empty paths. */
+.flow-link[hidden] { display: none; }
 
 .link-track { stroke: rgba(255, 255, 255, .06); stroke-width: 9; stroke-linecap: round; }
 .flow-stage[data-layout="narrow"] .link-track { stroke-width: 7; }
@@ -119,6 +124,7 @@
   transition: width .6s cubic-bezier(.22, .61, .36, 1);
 }
 
+.node-generator { --tone: var(--generator-color); }
 .node-battery[data-band="mid"] { --tone: #ffd166; }
 .node-battery[data-band="low"] { --tone: var(--warn-color); }
 .node-battery[data-band="critical"] { --tone: var(--danger-color); }
@@ -207,6 +213,7 @@
 .fl-arrow { font-size: 11px; line-height: 1; }
 .fl-solar { color: var(--solar-color); } .fl-battery { color: var(--battery-color); }
 .fl-grid { color: var(--grid-color); } .fl-load { color: var(--load-color); }
+.fl-generator { color: var(--generator-color); }
 .fl-value { color: var(--text-0); font-weight: 550; }
 
 /* ─── diagram footer: load coverage ─── */
@@ -222,6 +229,7 @@
 .mix-seg { display: block; width: var(--w, 0%); transition: width .6s cubic-bezier(.22, .61, .36, 1); border-radius: 99px; }
 .mix-seg.is-zero { display: none; }
 .mix-seg.mix-pv { background: linear-gradient(90deg, #ffcd6b, var(--solar-color)); }
+.mix-seg.mix-gen { background: linear-gradient(90deg, #ffa98f, var(--generator-color)); }
 .mix-seg.mix-batt { background: linear-gradient(90deg, #6ff0b4, var(--battery-color)); }
 .mix-seg.mix-grid { background: linear-gradient(90deg, #8dc0ff, var(--grid-color)); }
 .mix-bar.is-empty { opacity: .35; }
@@ -230,6 +238,7 @@
 .mix-item { display: flex; align-items: center; gap: 6px; }
 .mix-item i { width: 7px; height: 7px; border-radius: 2px; display: block; }
 .mix-item.mix-pv i { background: var(--solar-color); }
+.mix-item.mix-gen i { background: var(--generator-color); }
 .mix-item.mix-batt i { background: var(--battery-color); }
 .mix-item.mix-grid i { background: var(--grid-color); }
 .mix-item.is-muted { color: var(--text-2); }
@@ -360,10 +369,51 @@
 
 .chart-empty {
   position: absolute; inset: 0;
-  display: none; place-items: center;
+  display: none; place-content: center; justify-items: center;
+  gap: 4px; padding: 0 16px; text-align: center;
   color: var(--text-2); font-size: 12.5px;
 }
 .chart-empty.is-visible { display: grid; }
+.chart-empty-text { color: var(--text-1); }
+.chart-empty-hint { color: var(--text-2); font-size: 11.5px; max-width: 42ch; line-height: 1.45; }
+
+/* ═══════════════════════ period selector ═══════════════════════ */
+
+.date-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.nav-period { display: flex; align-items: center; gap: 4px; }
+.nav-btn { width: 28px; height: 28px; }
+.nav-btn[disabled] { opacity: .3; cursor: default; pointer-events: none; }
+
+.nav-label {
+  position: relative;
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 10px;
+  min-width: 132px;
+  justify-content: center;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-0);
+  font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nav-label:hover { background: var(--surface-2); border-color: var(--border-strong); }
+.nav-label[hidden] { display: none; }
+.nav-cal { display: grid; place-items: center; color: var(--text-2); }
+/* The native picker drives the calendar; the visible chip shows the period
+   label, because "August 2026" reads better than "01/08/2026". */
+.nav-date-input {
+  position: absolute; inset: 0;
+  opacity: 0; width: 100%; padding: 0; border: none; pointer-events: none;
+}
+.nav-now { padding: 5px 11px; font-size: 11.5px; }
+.nav-now[hidden] { display: none; }
+
+.nav-custom { display: flex; align-items: center; gap: 6px; }
+.nav-custom[hidden] { display: none; }
+.nav-range-input { width: 132px; font-size: 12px; padding: 5px 8px; }
+.nav-dash { color: var(--text-2); }
 
 .range-switch {
   display: flex; gap: 2px; padding: 2px;
@@ -396,6 +446,7 @@
 .string-meta, .phase-meta { font-size: 10.5px; color: var(--text-2); }
 .card-solar .bar-fill { --tone: var(--solar-color); }
 .card-phases .bar-fill { --tone: var(--phase-color); }
+.card-generator .bar-fill { --tone: var(--generator-color); }
 
 /* ═══════════════════════ ONBOARDING ═══════════════════════ */
 
@@ -591,3 +642,39 @@ textarea { min-height: 168px; resize: vertical; font-family: ui-monospace, SFMon
   background: rgba(0, 0, 0, .35); padding: 1px 5px; border-radius: 5px; color: var(--accent-color);
 }
 .help-text a { color: var(--grid-color); }
+
+
+/* ═══════════════════════ sensor dialog ═══════════════════════ */
+
+.detail-panel { width: min(760px, 100%); }
+.detail-title { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.detail-entity {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; color: var(--text-2);
+  user-select: all; word-break: break-all;
+}
+.detail-nav {
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, .14);
+}
+.detail-chart { min-height: 300px; }
+.detail-chart[hidden] { display: none; }
+
+.detail-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; min-height: 240px; padding: 20px;
+  text-align: center; color: var(--text-1); font-size: 13px;
+}
+.detail-empty[hidden] { display: none; }
+.detail-empty small { color: var(--text-2); font-size: 11.5px; line-height: 1.6; max-width: 420px; }
+.detail-empty code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(0, 0, 0, .35); padding: 1px 5px; border-radius: 5px; color: var(--accent-color);
+}
+
+.detail-stats { display: flex; gap: 18px; flex-wrap: wrap; }
+.detail-stat { display: flex; align-items: baseline; gap: 6px; }
+.detail-stat-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-2); }
+.detail-stat-value { font-size: 13.5px; font-weight: 600; }
+.detail-link { padding: 6px 12px; font-size: 11.5px; text-decoration: none; }

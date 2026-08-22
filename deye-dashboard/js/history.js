@@ -1,53 +1,74 @@
 /**
  * history.js — historical data straight from Home Assistant.
  *
- * There is no own database: Recorder and Statistics already live in Home Assistant.
- *   - "Today"        -> history/history_during_period      (instantaneous power)
- *   - "7 / 30 days"  -> recorder/statistics_during_period  (daily energy)
+ * There is no own database: Recorder and Statistics already live in Home
+ * Assistant.
+ *   - instantaneous power  -> history/history_during_period
+ *   - energy per period    -> recorder/statistics_during_period (`change`)
+ *   - sensor min/avg/max   -> recorder/statistics_during_period (`mean/min/max`)
  *
- * Every request is on demand (open the panel, switch the range) — never polling.
+ * Every request is on demand — when the panel opens or the period changes —
+ * never on a timer.
  */
 
-import { normalizeValue, log, warn, startOfToday, startOfDaysAgo, downsample } from './utils.js';
+import { normalizeValue, log, warn, downsample } from './utils.js';
+import { t } from './i18n.js';
 
 const cache = new Map();
 const TTL_MS = 60000;
+// A period that ended cannot change any more, so its answer is worth keeping
+// for as long as the tab lives — navigating back and forth is free.
+const CLOSED_TTL_MS = 6 * 3600 * 1000;
 
 function cacheKey(kind, ids, from, to, extra = '') {
-  return `${kind}|${ids.join(',')}|${from}|${to}|${extra}`;
+  // The end is rounded to the minute so a live period does not miss the cache
+  // on every repaint, while a past period keys exactly.
+  return `${kind}|${ids.join(',')}|${+from}|${Math.floor(+to / 60000)}|${extra}`;
 }
 
-function fromCache(key) {
+/** A period whose end is in the past can never gain new data. */
+function ttlFor(to) { return +to < Date.now() - 60000 ? CLOSED_TTL_MS : TTL_MS; }
+
+function fromCache(key, to) {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.t < TTL_MS) return hit.v;
-  return null;
+  return hit && Date.now() - hit.t < ttlFor(to) ? hit.v : null;
 }
 
 function toCache(key, v) {
   cache.set(key, { t: Date.now(), v });
-  if (cache.size > 24) cache.delete(cache.keys().next().value);
+  if (cache.size > 40) cache.delete(cache.keys().next().value);
   return v;
 }
 
-export function clearHistoryCache() { cache.clear(); }
+export function clearHistoryCache() { cache.clear(); statIdCache = null; }
+
+function unitOf(client, entityId, points) {
+  const st = client.getState(entityId);
+  if (st && st.attributes && st.attributes.unit_of_measurement) return st.attributes.unit_of_measurement;
+  const first = points && points[0];
+  if (first && first.a && first.a.unit_of_measurement) return first.a.unit_of_measurement;
+  return '';
+}
+
+/* ─────────────────────── instantaneous values ─────────────────────── */
 
 /**
- * Instantaneous power over a period.
- * @returns {Object<string, Array<[number, number]>>} entity_id -> [[ms, value(kW)], ...]
+ * States over a period, normalised to the canonical unit of each role kind.
+ * @returns {Object<string, Array<[number, number]>>} entity_id -> [[ms, value]]
  */
-export async function fetchPowerHistory(client, entityIds, kindByEntity, start, end = new Date(), maxPoints = 700) {
+export async function fetchPowerSeries(client, entityIds, from, to, { kinds = {}, maxPoints = 700 } = {}) {
   const ids = entityIds.filter(Boolean);
   if (!ids.length) return {};
-  const key = cacheKey('hist', ids, start.getTime(), Math.floor(end.getTime() / 60000));
-  const cached = fromCache(key);
+  const key = cacheKey('hist', ids, from, to, `${ids.map((id) => kinds[id] || '').join(',')}|${maxPoints}`);
+  const cached = fromCache(key, to);
   if (cached) return cached;
 
   let raw;
   try {
     raw = await client.callWS({
       type: 'history/history_during_period',
-      start_time: start.toISOString(),
-      end_time: end.toISOString(),
+      start_time: new Date(from).toISOString(),
+      end_time: new Date(to).toISOString(),
       entity_ids: ids,
       minimal_response: true,
       no_attributes: true,
@@ -61,7 +82,7 @@ export async function fetchPowerHistory(client, entityIds, kindByEntity, start, 
   const out = {};
   for (const [entityId, points] of Object.entries(raw || {})) {
     if (!Array.isArray(points)) continue;
-    const kind = kindByEntity[entityId] || 'power';
+    const kind = kinds[entityId] || 'power';
     const unit = unitOf(client, entityId, points);
     const series = [];
     for (const p of points) {
@@ -79,61 +100,64 @@ export async function fetchPowerHistory(client, entityIds, kindByEntity, start, 
   return toCache(key, out);
 }
 
-function unitOf(client, entityId, points) {
-  const st = client.getState(entityId);
-  if (st && st.attributes && st.attributes.unit_of_measurement) return st.attributes.unit_of_measurement;
-  const first = points && points[0];
-  if (first && first.a && first.a.unit_of_measurement) return first.a.unit_of_measurement;
-  return '';
+/* ─────────────────────────── statistics ─────────────────────────── */
+
+function requestStats(client, ids, from, to, period, types) {
+  return client.callWS({
+    type: 'recorder/statistics_during_period',
+    start_time: new Date(from).toISOString(),
+    end_time: new Date(to).toISOString(),
+    statistic_ids: ids,
+    period,
+    ...(types ? { types } : {}),
+  });
+}
+
+async function statsWithFallback(client, ids, from, to, period, types) {
+  try {
+    return await requestStats(client, ids, from, to, period, types);
+  } catch (e) {
+    // Older cores reject the `types` parameter outright.
+    try {
+      return await requestStats(client, ids, from, to, period, null);
+    } catch (e2) {
+      warn('recorder/statistics_during_period is unavailable:', e2 && e2.message);
+      return null;
+    }
+  }
 }
 
 /**
- * Daily energy for the last N days via Statistics.
- * @returns {Object<string, Array<{start:Date, value:number}>>}
+ * Energy accumulated per bucket, for bar charts.
+ * @param {string} period 'hour' | 'day' | 'month'
+ * @returns {Object<string, Array<{start: Date, value: number}>>}
  */
-export async function fetchDailyEnergy(client, entityIds, days) {
-  const ids = entityIds.filter(Boolean);
+export async function fetchEnergyBars(client, statIds, from, to, period = 'day') {
+  const ids = statIds.filter(Boolean);
   if (!ids.length) return {};
-  const start = startOfDaysAgo(days);
-  const end = new Date();
-  const key = cacheKey('stat', ids, start.getTime(), Math.floor(end.getTime() / 600000), 'day');
-  const cached = fromCache(key);
+  const key = cacheKey('bars', ids, from, to, period);
+  const cached = fromCache(key, to);
   if (cached) return cached;
 
-  const request = (types) => client.callWS({
-    type: 'recorder/statistics_during_period',
-    start_time: start.toISOString(),
-    end_time: end.toISOString(),
-    statistic_ids: ids,
-    period: 'day',
-    ...(types ? { types } : {}),
-  });
-
-  let raw;
-  try {
-    raw = await request(['change', 'sum', 'max', 'state']);
-  } catch (e) {
-    // Older Home Assistant versions reject the types parameter — retry without it.
-    try {
-      raw = await request(null);
-    } catch (e2) {
-      warn('recorder/statistics_during_period is unavailable:', e2 && e2.message);
-      return {};
-    }
-  }
+  const raw = await statsWithFallback(client, ids, from, to, period, ['change', 'sum', 'max', 'state']);
+  if (!raw) return {};
 
   const out = {};
-  for (const [statId, rows] of Object.entries(raw || {})) {
+  for (const [statId, rows] of Object.entries(raw)) {
     if (!Array.isArray(rows) || !rows.length) continue;
-    const unit = (client.getState(statId) && client.getState(statId).attributes.unit_of_measurement) || 'kWh';
+    const st = client.getState(statId);
+    const unit = (st && st.attributes && st.attributes.unit_of_measurement) || 'kWh';
     const series = [];
     let prevSum = null;
     for (const r of rows) {
       const ts = typeof r.start === 'number' ? r.start : Date.parse(r.start);
       let v = null;
       if (r.change !== undefined && r.change !== null) v = r.change;
-      else if (r.sum !== undefined && r.sum !== null) { v = prevSum === null ? null : r.sum - prevSum; prevSum = r.sum; }
-      else if (r.max !== undefined && r.max !== null) v = r.max;          // daily sensor that resets
+      else if (r.sum !== undefined && r.sum !== null) v = prevSum === null ? null : r.sum - prevSum;
+      else if (r.max !== undefined && r.max !== null) v = r.max;   // daily sensor that resets
+      // Always advance the baseline: a response mixing `change` and `sum` rows
+      // would otherwise diff against a stale one.
+      if (r.sum !== undefined && r.sum !== null) prevSum = r.sum;
       if (v === null) continue;
       const n = normalizeValue('energy', v, unit);
       if (n.value === null) continue;
@@ -141,19 +165,92 @@ export async function fetchDailyEnergy(client, entityIds, days) {
     }
     if (series.length) out[statId] = series;
   }
-  log('statistics:', Object.entries(out).map(([k, v]) => `${k}=${v.length}d`).join(' '));
+  log('energy bars:', Object.entries(out).map(([k, v]) => `${k}=${v.length}`).join(' '));
   return toCache(key, out);
 }
 
-/** Which entities have long-term statistics at all. */
-export async function listStatisticIds(client, entityIds) {
-  try {
-    const list = await client.callWS({ type: 'recorder/list_statistic_ids', statistic_type: 'sum' });
-    const set = new Set((list || []).map((s) => s.statistic_id));
-    return entityIds.filter((id) => set.has(id));
-  } catch (e) {
-    return [];
+/**
+ * Sum of an energy statistic over the whole period — one number per entity,
+ * used by the KPI row when it cannot read today's live counters.
+ * @returns {Object<string, number>}
+ */
+export async function fetchEnergyTotals(client, statIds, from, to, period = 'day') {
+  const bars = await fetchEnergyBars(client, statIds, from, to, period);
+  const out = {};
+  for (const [id, rows] of Object.entries(bars)) {
+    out[id] = rows.reduce((a, r) => a + r.value, 0);
   }
+  return out;
 }
 
-export { startOfToday, startOfDaysAgo };
+/**
+ * mean / min / max per bucket for one sensor — the band chart in the dialog.
+ * @returns {Array<{start: Date, mean: number, min: number, max: number}>}
+ */
+export async function fetchSensorStats(client, statId, from, to, period = 'day', kind = 'power') {
+  if (!statId) return [];
+  const key = cacheKey('band', [statId], from, to, `${period}|${kind}`);
+  const cached = fromCache(key, to);
+  if (cached) return cached;
+
+  const raw = await statsWithFallback(client, [statId], from, to, period, ['mean', 'min', 'max']);
+  const rows = raw && raw[statId];
+  if (!Array.isArray(rows)) return toCache(key, []);
+
+  const st = client.getState(statId);
+  const unit = (st && st.attributes && st.attributes.unit_of_measurement) || '';
+  const conv = (v) => (v === null || v === undefined ? null : normalizeValue(kind, v, unit).value);
+  const out = [];
+  for (const r of rows) {
+    const ts = typeof r.start === 'number' ? r.start : Date.parse(r.start);
+    const mean = conv(r.mean);
+    if (mean === null) continue;
+    out.push({
+      start: new Date(ts),
+      mean,
+      min: conv(r.min) !== null ? conv(r.min) : mean,
+      max: conv(r.max) !== null ? conv(r.max) : mean,
+    });
+  }
+  return toCache(key, out);
+}
+
+/**
+ * Why a period came back empty. The three cases need different remedies, so the
+ * chart card and the sensor dialog must not diverge on the wording.
+ * @param {string} step 'power' | 'day' | 'month'
+ * @returns {Promise<{text: string, hint: string, reason: string}>}
+ */
+export async function explainEmpty(client, entityIds, step) {
+  const ids = (entityIds || []).filter(Boolean);
+  if (!ids.length) return { text: t('chart.noData'), hint: '', reason: 'none' };
+  const withStats = await listStatisticIds(client, ids);
+  if (!withStats.length && step !== 'power') {
+    return { text: t('detail.noHistory'), hint: t('detail.noHistoryHint'), reason: 'no-statistics' };
+  }
+  if (step === 'power' && withStats.length) {
+    // Recorder keeps detailed states for a limited window; statistics survive.
+    return { text: t('detail.noDataPeriod'), hint: t('detail.dayTooOld'), reason: 'purged' };
+  }
+  return { text: t('detail.noDataPeriod'), hint: '', reason: 'no-data' };
+}
+
+/** Which of these entities have long-term statistics at all. */
+export async function listStatisticIds(client, entityIds) {
+  const all = await allStatisticIds(client);
+  return (entityIds || []).filter((id) => all.has(id));
+}
+
+let statIdCache = null;
+
+/** The whole set of statistic ids, fetched once per session. */
+export async function allStatisticIds(client) {
+  if (statIdCache) return statIdCache;
+  try {
+    const list = await client.callWS({ type: 'recorder/list_statistic_ids' });
+    statIdCache = new Set((list || []).map((s) => s.statistic_id));
+  } catch (e) {
+    return new Set();          // do not cache a failure: the next call retries
+  }
+  return statIdCache;
+}
