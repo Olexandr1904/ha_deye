@@ -27,18 +27,39 @@ export class Browser {
     const proc = spawn(CHROME, args, { stdio: 'ignore', detached: true });
     const b = new Browser(port, proc);
     b.profileDir = dir;
-    await b._waitForPort();
+    try {
+      await b._waitForPort(dir);
+    } catch (e) {
+      // Never leave a detached Chrome and its profile behind on a failed launch.
+      await b.close();
+      throw e;
+    }
+    // Ctrl-C skips every finally block, so the cleanup has to be registered.
+    b._onSignal = () => { b.close().finally(() => process.exit(130)); };
+    process.once('SIGINT', b._onSignal);
+    process.once('SIGTERM', b._onSignal);
     return b;
   }
 
   constructor(port, proc) { this.port = port; this.proc = proc; this.pages = []; }
 
-  async _waitForPort() {
+  async _waitForPort(profileDir) {
     for (let i = 0; i < 100; i++) {
       try {
         const r = await fetch(`http://127.0.0.1:${this.port}/json/version`);
-        if (r.ok) { this.version = await r.json(); return; }
-      } catch {}
+        if (r.ok) {
+          const v = await r.json();
+          // The port is random, so it can belong to an orphan from another run.
+          // Attaching to a stranger's browser would be worse than failing.
+          if (profileDir && v['userDataDir'] && !v['userDataDir'].includes(profileDir)) {
+            throw new Error(`port ${this.port} belongs to another Chrome (${v['userDataDir']})`);
+          }
+          this.version = v;
+          return;
+        }
+      } catch (e) {
+        if (/belongs to another Chrome/.test(e.message)) throw e;
+      }
       await sleep(100);
     }
     throw new Error('Chrome never opened the debugging port');
@@ -55,6 +76,11 @@ export class Browser {
   }
 
   async close() {
+    if (this._onSignal) {
+      process.off('SIGINT', this._onSignal);
+      process.off('SIGTERM', this._onSignal);
+      this._onSignal = null;
+    }
     for (const p of this.pages) { try { p.ws.close(); } catch {} }
     // Kill the whole process group: --headless=new leaves helper processes
     // behind that keep holding the port and the profile directory.
@@ -115,6 +141,12 @@ class Page {
         resolve(this);
       });
       this.ws.addEventListener('error', reject);
+      // A crashed tab must fail every pending command at once, not make each of
+      // them wait out the full protocol timeout.
+      this.ws.addEventListener('close', () => {
+        this._closed = true;
+        for (const [id, p] of this._pending) { this._pending.delete(id); p.reject(new Error('the page closed the debugging connection')); }
+      });
     });
   }
 
@@ -135,18 +167,37 @@ class Page {
     this._listeners.get(method).push(cb);
   }
 
+  off(method, cb) {
+    const list = this._listeners.get(method);
+    if (!list) return;
+    const i = list.indexOf(cb);
+    if (i >= 0) list.splice(i, 1);
+  }
+
   once(method, timeout = 10000) {
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`timed out waiting for ${method}`)), timeout);
-      const handler = (p) => { clearTimeout(t); resolve(p); };
+      // The listener is always removed: a run that waits for eight page loads
+      // would otherwise end with eight handlers resolving settled promises.
+      const done = (fn) => (p) => { clearTimeout(t); this.off(method, handler); fn(p); };
+      const t = setTimeout(() => { this.off(method, handler); reject(new Error(`timed out waiting for ${method}`)); }, timeout);
+      const handler = done(resolve);
       this.on(method, handler);
     });
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, timeout = 60000) {
     const id = ++this._id;
     return new Promise((resolve, reject) => {
-      this._pending.set(id, { resolve, reject });
+      // A safety net: a page that stops producing frames could otherwise leave
+      // an evaluate() pending forever and stall the whole run.
+      const timer = setTimeout(() => {
+        if (this._pending.delete(id)) reject(new Error(`${method} did not answer in ${timeout} ms`));
+      }, timeout);
+      this._pending.set(id, {
+        resolve: (v) => { clearTimeout(timer); resolve(v); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
+      if (this._closed) { this._pending.delete(id); clearTimeout(timer); reject(new Error('the debugging connection is closed')); return; }
       this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -158,6 +209,46 @@ class Page {
       screenWidth: width, screenHeight: height,
     });
     if (mobile) await this.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+
+    // Rendering can be suspended after a screenshot, and while it is, neither
+    // ResizeObserver nor requestAnimationFrame fire — so the page would keep the
+    // layout it had. Bring the target to front and wait for one real frame.
+    await this.send('Page.bringToFront').catch(() => {});
+    await this.waitForFrame();
+
+    // Confirm the page actually sees the new width before returning: silently
+    // measuring the old layout is the kind of failure that costs an hour.
+    let seen = null;
+    for (let i = 0; i < 40; i++) {
+      seen = await this.eval('return innerWidth;').catch(() => null);
+      if (seen === width) return;
+      await sleep(50);
+    }
+    throw new Error(`viewport never became ${width}px wide (innerWidth=${seen})`);
+  }
+
+  /**
+   * Resolves once the page produces an animation frame.
+   *
+   * A headless page can stop driving its frame loop entirely (after a
+   * screenshot, for instance). While that lasts neither requestAnimationFrame
+   * nor ResizeObserver fire, so anything the dashboard defers to a frame — which
+   * is deliberately most of its work — never happens. Capturing one pixel forces
+   * a frame and gets the loop going again.
+   */
+  async waitForFrame(timeout = 1200) {
+    const once = () => this.eval(`return await Promise.race([
+      new Promise((r) => requestAnimationFrame(() => r(true))),
+      new Promise((r) => setTimeout(() => r(false), ${timeout})),
+    ]);`).catch(() => false);
+
+    if (await once()) return true;
+    try {
+      await this.send('Page.captureScreenshot', {
+        format: 'jpeg', quality: 1, clip: { x: 0, y: 0, width: 1, height: 1, scale: 1 },
+      });
+    } catch (e) { /* nothing else to try */ }
+    return once();
   }
 
   /** Wipes all data for an origin so tests cannot leak into each other. */

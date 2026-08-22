@@ -9,7 +9,11 @@ venv/
 # Node
 node_modules/
 
-# Local secrets: SMB passwords, Home Assistant tokens
+# Local secrets and machine-specific files: SMB passwords, Home Assistant
+# tokens, and the entity mapping (harmless but full of local entity ids).
 secret/
 *.token
-.smb
+.smb*
+*password*
+*.secret
+mapping*.json

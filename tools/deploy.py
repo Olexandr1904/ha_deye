@@ -21,7 +21,9 @@ What it does:
   2. packages/deye_dashboard.yaml    - the panel_custom block (configuration.yaml is
                                        left alone when it already has
                                        homeassistant: packages: !include_dir_named packages);
-  3. never deletes anything: files are only overwritten by name.
+  3. no file is deleted, and the panel package is never allowed to lose settings:
+     a re-deploy without --entities keeps the `config:` block already on the
+     system instead of overwriting it, and always leaves a .bak beside it.
 
 A Home Assistant restart is required afterwards: panel_custom is read at start-up only.
 """
@@ -39,8 +41,35 @@ PACKAGE = 'packages/deye_dashboard.yaml'
 SKIP = {'.DS_Store'}
 
 
+LANGUAGES = {'en', 'uk', 'auto'}
+
+
+def parse_config_block(text: str) -> list[str]:
+    """The `config:` block of an existing package, as raw lines (no reindenting).
+
+    Re-deploying without --entities must not silently drop the mapping a human
+    pinned earlier, so what is already on the system is carried forward.
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    inside = False
+    for line in lines:
+        if not inside:
+            if line.strip() == 'config:':
+                inside = True
+                out.append(line)
+            continue
+        # The block ends at the first line that is not deeper than `config:`.
+        if line.strip() and not line.startswith(' ' * 6):
+            break
+        out.append(line)
+    while out and not out[-1].strip():
+        out.pop()
+    return out if len(out) > 1 else []
+
+
 def build_package_yaml(entities: dict | None, rated_power: float | None, version: str,
-                       language: str | None = None) -> str:
+                       language: str | None = None, keep_config: list[str] | None = None) -> str:
     lines = [
         '# Deye Dashboard - a local panel for the solar system.',
         f'# Files: /config/{DEST}/ (README.md and INSTALL.md live there too).',
@@ -56,6 +85,10 @@ def build_package_yaml(entities: dict | None, rated_power: float | None, version
         '    embed_iframe: false           # no iframe: the panel lives inside HA',
         '    require_admin: false',
     ]
+    if keep_config and not (entities or rated_power or language):
+        # Nothing new to write: preserve the block verbatim.
+        lines.extend(keep_config)
+        return '\n'.join(lines) + '\n'
     if entities or rated_power or language:
         lines.append('    config:')
         if language:
@@ -100,7 +133,7 @@ def main() -> int:
     ap.add_argument('--password-file', required=True, help='file containing the password (single line)')
     ap.add_argument('--entities', help='JSON {role: entity_id} to pin the mapping in the YAML')
     ap.add_argument('--rated-power', type=float, help='inverter rated power, kW')
-    ap.add_argument('--language', help="interface language: en | uk | auto")
+    ap.add_argument('--language', choices=sorted(LANGUAGES), help='interface language')
     ap.add_argument('--no-package', action='store_true', help='files only, no panel_custom')
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
@@ -108,7 +141,7 @@ def main() -> int:
     files = local_files()
     version = read_version()
     entities = json.load(open(args.entities, encoding='utf-8')) if args.entities else None
-    package = None if args.no_package else build_package_yaml(entities, args.rated_power, version, args.language)
+    write_package = not args.no_package
 
     total = sum(os.path.getsize(p) for p, _ in files)
     print(f'source   : {SRC}')
@@ -119,8 +152,9 @@ def main() -> int:
     if args.dry_run:
         for _, rel in files:
             print(f'  + {DEST}/{rel}')
-        if package:
-            print(f'\n--- {PACKAGE} ---\n{package}')
+        if write_package:
+            preview = build_package_yaml(entities, args.rated_power, version, args.language)
+            print(f'\n--- {PACKAGE} (without the settings already on the host) ---\n{preview}')
         return 0
 
     with open(args.password_file, encoding='utf-8') as f:
@@ -149,11 +183,32 @@ def main() -> int:
             dst.write(src.read())
         print(f'  → {DEST}/{rel}')
 
-    if package:
+    if write_package:
         ensure_dir('packages')
-        with smbclient.open_file(remote(PACKAGE), mode='w', encoding='utf-8', newline='') as f:
-            f.write(package)
-        print(f'  → {PACKAGE}')
+        existing = ''
+        if smbclient.path.exists(remote(PACKAGE)):
+            with smbclient.open_file(remote(PACKAGE), mode='r', encoding='utf-8') as f:
+                existing = f.read()
+        keep = parse_config_block(existing)
+        package = build_package_yaml(entities, args.rated_power, version, args.language, keep)
+
+        if keep and (entities or args.rated_power or args.language):
+            print(f'  ! {PACKAGE} already carries a config: block — replacing it with the '
+                  'values given on the command line')
+        elif keep:
+            print(f'  = {PACKAGE}: keeping the {len(keep) - 1} config lines already on the host')
+
+        if existing and existing != package:
+            # A copy of whatever was there, so a mistake is always recoverable.
+            with smbclient.open_file(remote(PACKAGE + '.bak'), mode='w', encoding='utf-8', newline='') as f:
+                f.write(existing)
+            print(f'  → {PACKAGE}.bak (previous version)')
+        if existing == package:
+            print(f'  = {PACKAGE} unchanged')
+        else:
+            with smbclient.open_file(remote(PACKAGE), mode='w', encoding='utf-8', newline='') as f:
+                f.write(package)
+            print(f'  → {PACKAGE}')
 
     print('\nDone. Home Assistant must be RESTARTED: panel_custom is read at start-up.')
     return 0
