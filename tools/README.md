@@ -9,43 +9,62 @@ These files are **not** part of what gets copied into Home Assistant: only the
 ./tools/run-tests.sh
 ```
 
-Serves `deye-dashboard/` over a static server, launches headless Chrome and runs
-78 checks in a real browser. No dependencies: Node 22+ (for the global
-`WebSocket`) and an installed Google Chrome.
+Runs the unit tests first (160 assertions, instantly, no browser), then serves
+`deye-dashboard/` over a static server, launches headless Chrome and runs 142
+checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`) and an installed
+Google Chrome.
 
-* `cdp.mjs` — a ~200 line Chrome DevTools Protocol driver: launches the browser,
-  emulates devices (a real viewport width and DPR, which `--window-size` cannot
-  give), clicks, reads the shadow DOM, takes screenshots and collects both console
-  errors **and** window errors.
-* `test-dashboard.mjs` — the checks themselves.
-
-| Group | Examples |
+| File | What it covers |
 |---|---|
-| Boot | no exceptions or `console.error`, no 4xx, all cards and nodes present |
-| Geometry | SVG link endpoints line up with the node edges (measured in screen coordinates) |
-| Animation | active flows animate, flows out of the inverter run in reverse, speed follows power, `prefers-reduced-motion` disables everything |
-| Charts | Today draws lines, 7/30 days draw bars, the legend shows totals, tooltip and crosshair work, series toggle off and on |
+| `test-ranges.mjs` | 69 assertions on the calendar arithmetic in `js/ranges.js`: period bounds, Monday weeks, month lengths, DST, resolution choice, navigation clamping. A fixed `now` is threaded through every call, so the suite still passes next year and in any timezone. |
+| `test-config.mjs` | 30 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, and that a merge never loses a pinned entity. |
+| `test-model.mjs` | 42 assertions on `js/power-flow.js` and the counter fallback: link directions, the load-coverage cascade, export attribution (including a generator exporting while the battery charges), and that an unmeasured sensor is never treated as zero. |
+| `test-deploy.py` | 19 assertions on the YAML `deploy.py` writes, including the case that must never regress: a re-deploy without `--entities` keeps the mapping already on the host. |
+| `test-dashboard.mjs` | 142 checks in a real browser (below). |
+| `cdp.mjs` | A 300-line Chrome DevTools Protocol driver: launches the browser on a private profile, emulates devices (a real viewport width and DPR, which `--window-size` cannot give), clicks, reads the shadow DOM, takes screenshots, and collects console errors, exceptions **and** window errors. Kills the process group on exit and on Ctrl-C. |
+
+| Browser group | Examples |
+|---|---|
+| Boot | no exceptions or `console.error`, no 4xx, every card and node present, the first paint agrees with the entity state, an idle generator is nowhere on screen |
+| Geometry | SVG link endpoints line up with the node edges, measured in screen coordinates, for `wide`, `wideGen` and `narrowGen` |
+| Animation | active flows animate, flows out of the inverter run in reverse, speed follows power, idle flows stop |
+| Chart periods | Day draws lines, Week/Month/Year draw bars, the legend shows period totals, forward navigation stops at today |
+| Chart interaction | tooltip and crosshair, series toggle off and on |
+| Date navigation | historical mode hides every live card, KPI is recomputed from statistics, `Now` returns, a custom interval loads, the pickers refuse the future, an empty period names its reason |
 | Settings | opens from the gear, four tabs, entity autocomplete, role-match validation, YAML/JSON export |
 | Responsive | 390 / 430 / 768 / 1024 / 1440 / 1920 / 2560 — no horizontal scrolling, labels do not overlap, numbers are not clipped |
 | Extreme data | 200 kW does not break the layout, low SOC turns the battery red, `unavailable` becomes dashes and OFFLINE, every flow goes idle |
 | Connection | RECONNECTING → DISCONNECTED → ONLINE |
 | Onboarding | shown with no entities mapped, "Detect automatically" finds the right ones |
 | Polarity | the demo reports "+ = discharge", the dashboard flips the sign itself, the balance adds up |
+| Language | English ⇄ Ukrainian, units and the settings dialog translate, the remount keeps state |
+| Generator | the five-spoke layout, the card, the KPI, the coverage mix, the balance, and that an export is attributed to the generator rather than to a charging battery |
+| Sensor dialog | a stat row, a KPI tile, a diagram node, a PV string and a phase all open their own sensor; Enter and Space work; a sensor without `state_class` explains itself; Escape closes |
+| Animation setting | `auto` / `on` / `off` against an emulated `prefers-reduced-motion` |
 | Accessibility | aria-labels on icon buttons, `role="tab"` / `aria-selected`, decorative SVG hidden, buttons focusable |
 
-Environment variables: `DEYE_PORT`, `DEYE_SHOTS`, `DEYE_VERBOSE=1`.
+Environment variables: `DEYE_PORT`, `DEYE_SHOTS`, `DEYE_ORIGIN`.
 
 ## Deployment
 
 ```bash
 python3 tools/deploy.py --host homeassistant.local --user <user> \
-    --password-file <file> --entities mapping.json --rated-power 12 [--dry-run]
+    --password-file .smb --entities mapping.json --rated-power 12 [--dry-run]
 ```
 
 Copies the dashboard into `/config/www/deye-dashboard/` over SMB (the "Samba
 share" add-on) and writes `/config/packages/deye_dashboard.yaml` with the
 `panel_custom` block, leaving `configuration.yaml` untouched. Needs
-`pip install smbprotocol`; nothing is ever deleted, files are only overwritten.
+`pip install smbprotocol`.
+
+Nothing is ever deleted, and the panel package cannot lose settings: a re-deploy
+without `--entities` carries the `config:` block already on the host forward
+unchanged, and any file it replaces is copied to `deye_dashboard.yaml.bak`
+first. `--entities`, `--rated-power` and `--language` replace that block with
+what you pass.
+
+Keep the password and the mapping out of the repository: `.gitignore` covers
+`secret/`, `*.token`, `.smb*`, `*password*` and `mapping*.json`.
 
 A Home Assistant restart is required afterwards — `panel_custom` is read at
 start-up only. Validate first with

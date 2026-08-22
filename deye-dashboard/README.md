@@ -27,7 +27,11 @@ Installation: [INSTALL.md](INSTALL.md).
 | Animated flows | SVG paths plus CSS `stroke-dashoffset`; speed follows the power |
 | Flow direction | measured values plus automatic sensor-polarity detection |
 | Distribution (PV→house, PV→battery, grid→house …) | derived from the power balance and labelled "calculated" |
-| Charts | an own SVG renderer (~330 lines), no Chart.js or ECharts |
+| Charts | an own SVG renderer, no Chart.js or ECharts |
+| Any past period | day / week / month / year or a custom interval, with a date picker |
+| Historical mode | a period entirely in the past hides the live diagram instead of mixing epochs |
+| Sensor drill-down | clicking any value backed by an entity opens its own chart |
+| Generator | a first-class source: fifth spoke, balance, distribution, KPI and card |
 | History | `history/history_during_period` and `recorder/statistics_during_period` |
 | Units | taken from `unit_of_measurement`, normalised to kW / kWh / V / A / °C / Hz |
 | Entity setup | keyword auto-detection, manual picking in the UI, or YAML |
@@ -44,17 +48,21 @@ Installation: [INSTALL.md](INSTALL.md).
 deye-dashboard.js        entry point: the <deye-dashboard> custom element, shadow DOM
 index.html               standalone mode (debugging; needs a token)
 
-js/config.js             ROLES: 50 role descriptions plus auto-detection hints
+js/config.js             ROLES: 55 role descriptions, defaults, stored-config migration
+js/ranges.js             calendar period arithmetic (pure functions, unit-tested)
+js/date-nav.js           the reusable period selector
+js/detail-dialog.js      single-sensor history dialog
 js/i18n.js               interface strings (English + Ukrainian)
 js/utils.js              formatting, unit normalisation, DOM/SVG helpers, chart maths
 js/icons.js              inline SVG icons (no external files)
 js/ha-client.js          Home Assistant access: panel mode (existing hass) and standalone
+js/discovery.js          entity auto-detection (domain and unit gates, keyword scoring)
 js/entity-manager.js     raw Home Assistant states -> normalised role values
 js/energy-model.js       the data model plus battery/grid polarity detection
 js/power-flow.js         link directions and energy distribution
 js/history.js            history and statistics
 js/charts.js             TimeSeriesChart and DailyBarChart in SVG
-js/flow-layout.js        diagram geometry (wide and narrow layouts)
+js/flow-layout.js        diagram geometry (four layouts: with and without a generator)
 js/renderer.js           builds the DOM once, then patches it
 js/settings-ui.js        settings dialog: entities, options, diagnostics, export
 js/demo.js               inverter simulation (demo mode and debugging)
@@ -137,6 +145,54 @@ prefix. The domain filter only accepts `sensor` and `binary_sensor`, because
 
 ---
 
+## Periods and history
+
+The chart header carries the whole time selection: `‹ 22 Aug 2026 📅 ›` plus
+`Day / Week / Month / Year / Custom`. Weeks start on Monday; months and years are
+calendar-exact; a custom interval picks its own resolution — up to 48 hours it
+draws instantaneous power, up to 92 days daily bars, beyond that monthly bars.
+
+Whether the dashboard is live or historical is **derived, never toggled**: a
+period that contains the present keeps the diagram and the detail cards, a period
+strictly in the past replaces them with a `VIEWING …` banner, KPI totals for that
+period and the chart. Forward navigation stops at the current period; backward
+navigation is unlimited, and an empty period says which of the three reasons
+applies — the sensor has no long-term statistics, the period predates the data,
+or detailed states for that day have already been purged while its month still
+has bars.
+
+KPI tiles always match the selected period. Today's numbers come from the live
+daily counters; any other period comes from long-term statistics. Note that
+self-sufficiency is necessarily defined differently for the two: live it is the
+share of instantaneous load covered by solar, generator and battery, while over a
+period it is the share of consumption that was not bought from the grid.
+
+## Clicking a value
+
+Any stat row, PV string, phase, KPI tile or diagram node backed by an entity
+opens a dialog with that sensor's own history, its own date navigation and
+min / avg / max for the period, plus a link to the Home Assistant history page.
+Energy counters are drawn as bars of per-period change; instantaneous quantities
+get a mean line with a shaded min–max band, which is the only useful way to look
+at power or temperature over a month.
+
+## Generator
+
+If the inverter reports a generator, it becomes a full energy source rather than
+a footnote: a fifth spoke in the diagram, a term in the power balance
+(`pv + generator + grid_import = load + battery_charge`), a share in the load
+coverage, a KPI tile and a card. It appears when it has power or has produced
+energy today, and because the daily counter only resets at midnight the diagram
+changes shape at most once a day.
+
+## Flow animation
+
+The particles move along each link in the direction energy actually flows, at a
+speed derived from the power, and stop when a flow is idle. The setting under the
+gear icon has three states: `auto` respects the operating system's "reduce
+motion" preference, `on` animates regardless, `off` never animates. If the
+particles ever look frozen, that system preference is the first thing to check.
+
 ## Configuration through YAML (optional)
 
 To make the configuration independent of the browser, set it on the panel itself:
@@ -183,14 +239,20 @@ The gear icon → Export tab generates ready-made YAML for your own system.
 ./tools/run-tests.sh
 ```
 
-78 checks in a real Chrome (headless, over the Chrome DevTools Protocol, no npm
-dependencies): link geometry is measured in screen coordinates, responsive layout
-is verified with real device emulation from 390 to 2560 px, and there are separate
-checks for `unavailable` entities, connection loss, onboarding, polarity
-auto-detection, accessibility and a clean console. See [tools/README.md](../tools/README.md).
+One command runs everything: 160 unit assertions (period arithmetic, energy
+distribution, stored-config migration and the deployment YAML — no browser,
+under a second) and then 142
+checks in a real Chrome, headless over the Chrome DevTools Protocol with no npm
+dependencies. Link geometry is measured in screen coordinates for all three
+diagram layouts, responsive layout is verified with real device emulation from
+390 to 2560 px, and there are separate checks for `unavailable` entities,
+connection loss, onboarding, polarity auto-detection, the sensor dialog,
+keyboard activation, accessibility and a clean console. See
+[tools/README.md](../tools/README.md).
 
-There is also a check **inside a running Home Assistant** (the panel boots in the
-real HA frontend with live inverter data): 21 assertions covering panel
+There is also a check **inside a running Home Assistant**
+(`tools/test-in-ha.mjs`, which boots the panel in the real HA frontend with live
+inverter data): 22 assertions covering panel
 registration, `panel` mode without an own WebSocket, the power balance, history
 from Recorder, 7-day statistics, diagnostics free of `unavailable`, layout inside
 the HA shell, and `hass-toggle-menu`.
@@ -200,7 +262,7 @@ the HA shell, and `hass-toggle-menu`.
 ```text
 ?demo=1&hour=13.5    test data with the time of day pinned
 ?deye_debug=1        [DEYE] logs in the console
-?deye_range=7d       open a specific chart range
+?deye_range=week     open a specific chart period (day|week|month|year)
 ?deye_settings=diag  open the settings dialog (entities|options|diag|export)
 ?deye_noauto=1       skip entity auto-detection
 ?diag=1              layout measurements (index.html only)

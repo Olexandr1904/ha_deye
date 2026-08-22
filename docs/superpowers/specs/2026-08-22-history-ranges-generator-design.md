@@ -60,8 +60,10 @@ The period is stated once, in the date bar. Source differs by period: for
 day+today the existing daily-reset sensors are used directly (no API call, always
 in sync with the inverter); every other period comes from long-term statistics.
 
-**Self-sufficiency is defined differently per mode, on purpose.** Live: share of
-instantaneous load covered by solar and battery, from the allocation. Period:
+**Self-sufficiency is defined differently per mode, on purpose.** Live:
+`100 − grid share` of the instantaneous load, from the allocation — everything
+that was not bought from the utility, so a running generator counts towards it
+(it burns fuel, but it is still not a purchase). Period:
 `(consumption − import) / consumption`, the standard "share of consumption not
 bought from the grid". Both are honest for their timescale; the difference is
 documented here so it is not mistaken for a bug.
@@ -98,20 +100,28 @@ view = {
 }
 ```
 
-`ranges.js` API:
+`ranges.js` API (every function that needs the clock takes `now` as its last
+parameter, defaulting to `new Date()`, so the unit tests are time-independent):
 
-- `periodBounds(view)` → `{ from, to, step, includesNow }`. `to` is exclusive and
-  clamped to "now" when the period contains it.
+- `periodBounds(view, now)` → `{ from, to, step, includesNow }`. `to` is exclusive
+  and clamped to "now" when the period contains it.
 - `shiftPeriod(view, delta)` → new view. A custom interval shifts by its own length.
 - `periodLabel(view)` → localised label (`15 Aug 2026`, `10–16 Aug 2026`,
   `August 2026`, `2026`, `1 Jul – 15 Aug 2026`).
-- `canGoForward(view)` → false when the next period starts in the future.
+- `canGoForward(view, now)` → false when the next period starts in the future.
 - `stepFor(from, to)` → `'power' | 'day' | 'month'`.
+- `isHistorical(view, now)` / `usesLiveCounters(view, now)` — the two derived
+  questions the rest of the code asks instead of storing a mode.
+- `withRange(view, range, now)` — switch range keeping the anchor; a custom range
+  derived from the current month or year is clamped so it never ends in the future.
+- `defaultView(range)`, `RANGE_KEYS`, `toDateInput` / `fromDateInput`, and the
+  calendar primitives (`startOfDay/Week/Month/Year`, `addDays`, `addMonths`).
 
 Bounds: weeks start on Monday, unconditionally — no locale-dependent week start.
 Months and years are calendar-exact. Aggregation step by range: day → `power`,
 week and month → `day`, year → `month`, custom → `stepFor`, which measures the
-interval in hours: ≤48 h → `power`, ≤92 days → `day`, otherwise `month`.
+interval in **calendar days** (not hours, so a 25-hour DST day does not change
+the resolution): ≤2 days → `power`, ≤92 days → `day`, otherwise `month`.
 
 ## Data loading
 
