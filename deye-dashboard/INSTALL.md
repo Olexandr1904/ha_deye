@@ -1,6 +1,6 @@
 # Installing Deye Dashboard in Home Assistant
 
-> **Already installed on this system** (22 Aug 2026, HA 2025.11.3, dashboard 1.1.0):
+> **Already installed on this system** (22 Aug 2026, HA 2025.11.3, dashboard 1.1.1):
 > files in `/config/www/deye-dashboard/`, the panel is wired up by
 > `/config/packages/deye_dashboard.yaml` (`configuration.yaml` was not touched),
 > 40 entities are pinned there, and the 12 kW rating comes from the attributes of
@@ -55,7 +55,7 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.0
+    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.1
     embed_iframe: false
     require_admin: false
     config:
@@ -75,12 +75,12 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.0
+    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.1
     embed_iframe: false           # important: no iframe, the panel lives inside HA
     require_admin: false
 ```
 
-`?v=1.1.0` only busts the browser cache. Bump it after updating the files (or do a
+`?v=1.1.1` only busts the browser cache. Bump it after updating the files (or do a
 hard reload: Ctrl/Cmd + Shift + R).
 
 ### Automated copying
@@ -120,9 +120,13 @@ use the **Export** tab, copy the YAML and paste it into `configuration.yaml` (th
 
 ## Periods and the date picker
 
-The chart header selects the period: `Day / Week / Month / Year / Custom` with
-`‹ ›` arrows and a date picker. Choosing a period that lies entirely in the past
-switches the whole panel into a historical view — the flow diagram and the detail
+The **top bar** selects the period, next to the panel name: `‹ 24 Aug 2026 📅 ›`
+plus a `Day / Week / Month / Year / Custom` list. Click the date to open the
+calendar, use `‹ ›` to step a period at a time, and pick `Custom` to get two
+date fields. The choice governs the whole page — diagram, cards and KPI — so it
+lives in the header rather than in one card.
+
+Choosing a period that lies entirely in the past switches the whole panel into a historical view — the flow diagram and the detail
 cards disappear (a past moment has no instantaneous values), a `VIEWING …` banner
 appears with a `Now` button, and the KPI tiles show that period's totals.
 

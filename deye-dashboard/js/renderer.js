@@ -9,7 +9,7 @@
 import { icon } from './icons.js';
 import {
   h, s, setText, setAttr, toggleClass, setStyleVar, formatPower, formatEnergy, formatNumber,
-  fmtClock, fmtDate, fmtAgo, fmtHours, isNum, clamp, DASH,
+  fmtClock, fmtAgo, fmtHours, isNum, clamp, DASH,
 } from './utils.js';
 import { t, getLanguage, LANGUAGES } from './i18n.js';
 import { FLOW_LAYOUTS, LINK_KEYS, pickLayout } from './flow-layout.js';
@@ -136,8 +136,14 @@ export class DashboardRenderer {
       text: lang.short, onclick: () => this.opts.onToggleLanguage && this.opts.onToggleLanguage(),
     });
     r.lastAgo = h('span', { class: 'lu-ago', text: '' });
-    r.dateEl = h('div', { class: 'brand-sub', text: fmtDate() });
-    r.settingsBtn = h('button', { class: 'icon-btn', type: 'button', title: t('ui.settings'), 'aria-label': t('ui.settings'), html: icon('gear', { size: 19 }), onclick: () => this.opts.onOpenSettings && this.opts.onOpenSettings() });
+    // The selected period drives the whole page (mode, KPI, chart), so its
+    // control sits in the top bar rather than in one card's header — and the
+    // brand no longer repeats today's date next to it.
+    r.dateNav = new DateNav({
+      compact: true, switcher: 'select', showNow: false,
+      onChange: (v) => this.opts.onViewChange && this.opts.onViewChange(v),
+    });
+    r.settingsBtn = h('button', { class: 'icon-btn settings-btn', type: 'button', title: t('ui.settings'), 'aria-label': t('ui.settings'), html: icon('gear', { size: 19 }), onclick: () => this.opts.onOpenSettings && this.opts.onOpenSettings() });
     r.demoBadge = h('span', { class: 'badge badge-demo', text: t('badge.demo'), hidden: true });
 
     return h('header', { class: 'topbar' },
@@ -145,8 +151,8 @@ export class DashboardRenderer {
       h('div', { class: 'brand' },
         h('span', { class: 'brand-mark', html: icon('bolt', { size: 20 }) }),
         h('div', { class: 'brand-text' },
-          h('div', { class: 'brand-title' }, h('span', { class: 'brand-title-main', text: this.opts.title || 'DEYE ENERGY' }), r.demoBadge),
-          r.dateEl)),
+          h('div', { class: 'brand-title' }, h('span', { class: 'brand-title-main', text: this.opts.title || 'DEYE ENERGY' }), r.demoBadge))),
+      h('div', { class: 'topbar-nav' }, r.dateNav.element),
       h('div', { class: 'topbar-spacer' }),
       h('div', { class: 'last-update' },
         h('span', { class: 'lu-label', text: t('ui.lastUpdate') }),
@@ -454,14 +460,14 @@ export class DashboardRenderer {
     const r = this.r;
     // The nav is built here, not injected, so a language switch rebuilds its
     // labels along with the rest of the DOM.
-    r.dateNav = new DateNav({ onChange: (v) => this.opts.onViewChange && this.opts.onViewChange(v) });
+
     r.chartHost = h('div', { class: 'chart-host' });
     r.chartTitle = h('span', { class: 'card-title-text', text: t('chart.power') });
     r.chartSpinner = h('span', { class: 'spinner', hidden: true });
     return card('card-chart', {
       titleEl: r.chartTitle,
       icon: 'chart',
-      extra: h('div', { class: 'card-actions' }, r.chartSpinner, r.dateNav.element),
+      extra: h('div', { class: 'card-actions' }, r.chartSpinner),
     }, r.chartHost);
   }
 
@@ -669,7 +675,6 @@ export class DashboardRenderer {
     const lu = state.meta.lastUpdate;
     setText(this.r.lastUpdate, lu ? fmtClock(lu) : DASH);
     setText(this.r.lastAgo, lu ? fmtAgo(lu) : '');
-    setText(this.r.dateEl, fmtDate());
     setAttr(this.r.demoBadge, 'hidden', !state.meta.demo);
   }
 

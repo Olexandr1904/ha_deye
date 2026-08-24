@@ -158,12 +158,12 @@ try {
     legend: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
     empty: q('.card-chart .chart-empty').classList.contains('is-visible'),
     yUnit: txt('.card-chart .axis-unit'),
-    label: txt('.card-chart .nav-label-text'),
-    active: q('.card-chart .range-btn.is-active').dataset.range,
-    forwardBlocked: q('.card-chart .nav-btn[disabled]') !== null,
+    label: txt('.topbar .nav-label-text'),
+    active: q('.topbar .nav-range-select').value,
+    forwardBlocked: q('.topbar .nav-btn[disabled]') !== null,
   };`);
   const pickRange = async (key, wait = 900) => {
-    await page.eval(`${HELPERS} q('.card-chart [data-range="${key}"]').click(); return 1;`);
+    await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = '${key}'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
     await sleep(wait);
   };
 
@@ -217,10 +217,64 @@ try {
   check('legend toggles a series off and on', legendToggle.after === legendToggle.before - 1 && legendToggle.restored === legendToggle.before,
     `${legendToggle.before} → ${legendToggle.after} → ${legendToggle.restored}`);
 
+  group('The period selector is on the page, not buried in it');
+  for (const [w, h] of [[1600, 1000], [1440, 900], [390, 844]]) {
+    await page.setViewport({ width: w, height: h, dpr: 1, mobile: w < 500 });
+    await poll(page, `!!q('.topbar .nav-label')`, 4000);
+    const place = await page.eval(`${HELPERS}
+      const chip = q('.topbar .nav-label');
+      const sel = q('.topbar .nav-range-select');
+      const cr = chip.getBoundingClientRect();
+      const sr2 = sel.getBoundingClientRect();
+      return {
+        chipTop: Math.round(cr.top), chipVisible: cr.top >= 0 && cr.bottom <= innerHeight && cr.width > 40,
+        selVisible: sr2.top >= 0 && sr2.bottom <= innerHeight && sr2.width > 30,
+        label: txt('.topbar .nav-label-text'),
+        overflow: document.documentElement.scrollWidth - innerWidth,
+        headerH: Math.round(q('.topbar').getBoundingClientRect().height),
+      };`);
+    check(`at ${w}x${h} the date and period sit in the first screen`,
+      place.chipVisible && place.selVisible && place.overflow <= 1,
+      `chip top ${place.chipTop}px "${place.label}", header ${place.headerH}px, overflow ${place.overflow}px`);
+  }
+  await page.setViewport({ width: 1600, height: 1000 });
+  await sleep(600);
+
+  const localDate = (expr) => `(() => { const d = ${expr}; return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); })()`;
+  group('Midnight rollover');
+  // The view anchor is a date, so at 00:00 "today" silently becomes yesterday.
+  // Rewinding the anchor by a day is the same situation and must self-heal —
+  // without waiting for a frame, because a background tab is given none.
+  const rolled = await page.eval(`${HELPERS}
+    const before = { view: JSON.parse(JSON.stringify(app.view)), mode: q('.app').dataset.mode };
+    app.view = { ...app.view, anchor: new Date(Date.now() - 86400000) };
+    app.view.anchor.setHours(0, 0, 0, 0);
+    app._followNow = true;                       // as it is while the user has not navigated
+    const healed = app._followCurrentPeriod();
+    return { before, healed, anchor: ${localDate('app.view.anchor')} };`);
+  const todayIso = toDateInput(new Date());
+  check('a stale anchor is re-anchored to the current period',
+    rolled.healed === true && rolled.anchor === todayIso, `${rolled.anchor} (wanted ${todayIso})`);
+  await poll(page, `q('.app').dataset.mode === 'live'`, 6000);
+  const afterRoll = await page.eval(`${HELPERS} return {
+    mode: q('.app').dataset.mode, label: txt('.topbar .nav-label-text'),
+    banner: !q('.history-bar').hidden };`);
+  check('and the page stays live rather than sliding into history',
+    afterRoll.mode === 'live' && !afterRoll.banner, `${afterRoll.mode}, ${afterRoll.label}`);
+  // A period the user chose deliberately must not be dragged forward.
+  const pinned = await page.eval(`${HELPERS}
+    app.view = { ...app.view, anchor: new Date(2026, 1, 10) };
+    app._followNow = false;
+    return { healed: app._followCurrentPeriod(), anchor: ${localDate('app.view.anchor')} };`);
+  check('a period the user picked is left alone', pinned.healed === false && pinned.anchor === '2026-02-10',
+    `${pinned.anchor}`);
+  await page.eval(`${HELPERS} app.setView({ ...app.view, anchor: new Date(), range: 'day' }); return 1;`);
+  await poll(page, `q('.app').dataset.mode === 'live'`, 6000);
+
   /* ─────────────── 5b. date navigation and history mode ─────────────── */
   group('Date navigation and historical mode');
   const navState = async () => page.eval(`${HELPERS} return {
-    label: txt('.card-chart .nav-label-text'),
+    label: txt('.topbar .nav-label-text'),
     mode: q('.app').dataset.mode,
     banner: !q('.history-bar').hidden,
     bannerText: txt('.history-label'),
@@ -230,14 +284,14 @@ try {
       .filter(e => e.offsetParent !== null).map(e => e.className.replace(/card |tone-\S+/g, '').trim()),
     emptyText: txt('.card-chart .chart-empty'),
     kpi: qa('.kpi:not([hidden]) .kpi-num').map(e => e.textContent.trim()),
-    nowVisible: !q('.nav-now').hidden,
-    forwardBlocked: q('.card-chart .nav-btn[disabled]') !== null,
+    nowVisible: q('.history-now').offsetParent !== null,
+    forwardBlocked: q('.topbar .nav-btn[disabled]') !== null,
   };`);
   const live = await navState();
   check('today is live: diagram and cards visible', live.mode === 'live' && live.flowVisible && live.detailsVisible && !live.banner,
     `mode=${live.mode}, ${live.label}`);
 
-  await page.eval(`${HELPERS} qa('.card-chart .nav-btn')[0].click(); return 1;`);
+  await page.eval(`${HELPERS} qa('.topbar .nav-btn')[0].click(); return 1;`);
   await poll(page, `q('.app').dataset.mode === 'history'`, 8000);
   const past = await navState();
   check('one day back enters historical mode', past.mode === 'history' && past.banner,
@@ -249,7 +303,8 @@ try {
       && JSON.stringify(past.kpi) !== JSON.stringify(live.kpi) && !past.kpi.includes('—'),
     `${past.label}: ${past.kpi.join(' / ')}`);
   check('forward navigation unblocked in the past', past.forwardBlocked === false);
-  check('Now button appears', past.nowVisible === true);
+  check('Now appears in the history banner', past.nowVisible === true);
+  check('the top bar does not offer a second Now', await page.eval(`${HELPERS} return !q('.topbar .nav-now');`) === true);
   await page.screenshot(`${SHOT}-history.png`);
 
   await page.eval(`${HELPERS} q('.history-now').click(); return 1;`);
@@ -257,29 +312,29 @@ try {
   const back = await navState();
   check('Now returns to live', back.mode === 'live' && !back.banner && back.flowVisible, back.label);
 
-  await page.eval(`${HELPERS} q('.card-chart [data-range="custom"]').click(); return 1;`);
+  await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'custom'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await sleep(900);
   await page.eval(`${HELPERS}
-    const input = qa('.card-chart .nav-range-input')[0];
+    const input = qa('.topbar .nav-range-input')[0];
     input.value = '2026-08-01';
     input.dispatchEvent(new Event('change', { bubbles: true }));
     return 1;`);
-  await poll(page, `qa('.card-chart .nav-range-input')[0].value === '2026-08-01' && qa('.card-chart rect.chart-bar').length > 0`, 8000);
+  await poll(page, `qa('.topbar .nav-range-input')[0].value === '2026-08-01' && qa('.card-chart rect.chart-bar').length > 0`, 8000);
   const custom = await page.eval(`${HELPERS}
-    const inputs = qa('.card-chart .nav-range-input');
+    const inputs = qa('.topbar .nav-range-input');
     return {
       count: inputs.length, from: inputs[0].value, to: inputs[1].value,
       bars: qa('.card-chart rect.chart-bar').length,
       lines: qa('.card-chart path.chart-line').length,
       mode: q('.app').dataset.mode,
-      max: q('.card-chart .nav-range-input').getAttribute('max'),
+      max: q('.topbar .nav-range-input').getAttribute('max'),
     };`);
   check('custom interval loads', custom.count === 2 && custom.from === '2026-08-01' && custom.bars > 0,
     `${custom.from} – ${custom.to}: ${custom.bars} bars, ${custom.lines} lines`);
   check('the pickers refuse the future', custom.max === toDateInput(new Date()), `max=${custom.max}`);
 
   await page.eval(`${HELPERS}
-    const inputs = qa('.card-chart .nav-range-input');
+    const inputs = qa('.topbar .nav-range-input');
     inputs[0].value = '2019-01-01';
     inputs[1].value = '2019-01-05';
     inputs[1].dispatchEvent(new Event('change', { bubbles: true }));
@@ -294,27 +349,27 @@ try {
 
   // Detailed states are purged long before statistics are, so a day far in the
   // past has an empty power chart while its month still has bars.
-  await page.eval(`${HELPERS} q('.card-chart [data-range="day"]').click(); return 1;`);
+  await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'day'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await sleep(600);
   await page.eval(`${HELPERS}
-    const input = q('.card-chart .nav-date-input');
+    const input = q('.topbar .nav-date-input');
     input.value = '2026-02-10';
     input.dispatchEvent(new Event('change', { bubbles: true }));
     return 1;`);
-  await poll(page, `txt('.card-chart .nav-label-text') !== null && q('.card-chart .chart-empty').classList.contains('is-visible')`, 8000);
+  await poll(page, `txt('.topbar .nav-label-text') !== null && q('.card-chart .chart-empty').classList.contains('is-visible')`, 8000);
   const dayEmptyOld = await page.eval(`${HELPERS} return {
     empty: q('.card-chart .chart-empty').classList.contains('is-visible'),
     hint: txt('.card-chart .chart-empty-hint') };`);
-  await page.eval(`${HELPERS} q('.card-chart [data-range="month"]').click(); return 1;`);
+  await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'month'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await poll(page, `qa('.card-chart rect.chart-bar').length > 0`, 8000);
   const oldMonth = await page.eval(`${HELPERS} return {
-    monthBars: qa('.card-chart rect.chart-bar').length, label: txt('.card-chart .nav-label-text') };`);
+    monthBars: qa('.card-chart rect.chart-bar').length, label: txt('.topbar .nav-label-text') };`);
   check('an old day is empty while its month still has data', dayEmptyOld.empty && oldMonth.monthBars > 0,
     `${oldMonth.label}: day empty=${dayEmptyOld.empty}, month bars=${oldMonth.monthBars}`);
   check('the purged day names the remedy', /week|month/i.test(dayEmptyOld.hint || ''),
     `hint "${dayEmptyOld.hint}"`);
 
-  await page.eval(`${HELPERS} q('.card-chart [data-range="day"]').click(); return 1;`);
+  await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'day'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await sleep(400);
   await page.eval(`${HELPERS} q('.history-now') && !q('.history-now').closest('[hidden]') ? q('.history-now').click() : null; return 1;`);
   await sleep(1100);
@@ -327,7 +382,7 @@ try {
   /* ─────────────── 6. settings ─────────────── */
   group('Settings dialog');
   const settings = await page.eval(`${HELPERS}
-    q('.topbar .icon-btn:last-of-type').click();
+    q('.topbar .settings-btn').click();
     await new Promise(r => setTimeout(r, 400));
     const modal = q('.modal');
     const inputs = qa('.modal .field input[type="text"]');
@@ -583,7 +638,7 @@ try {
     `KPI ${ukExtra.kpiUnit}, axis ${ukExtra.chartUnit}, node ${ukExtra.nodeUnit}, battery ${ukExtra.voltage}`);
 
   const ukSettings = await page.eval(`${HELPERS}
-    q('.topbar .icon-btn:last-of-type').click();
+    q('.topbar .settings-btn').click();
     await new Promise(r => setTimeout(r, 500));
     const tabs = qa('.modal .tab-btn').map(b => b.textContent.trim());
     q('.modal .tab-btn[data-tab="options"]').click();
@@ -875,13 +930,15 @@ try {
   const a11y = await page.eval(`${HELPERS} return {
     iconBtns: qa('.icon-btn').length,
     labeled: qa('.icon-btn[aria-label]').length,
-    tabs: qa('.card-chart .range-btn[role="tab"][aria-selected]').length,
+    periodOptions: q('.topbar .nav-range-select').options.length,
+    periodLabelled: !!q('.topbar .nav-range-select').getAttribute('aria-label'),
     svgHidden: qa('svg[aria-hidden="true"]').length,
     contrastVars: getComputedStyle(host).getPropertyValue('--text-0').trim(),
-    focusVisible: (() => { const b = q('.range-btn'); b.focus(); return sr.activeElement === b; })(),
+    focusVisible: (() => { const b = q('.topbar .nav-label'); b.focus(); return sr.activeElement === b; })(),
   };`);
   check('icon buttons carry an aria-label', a11y.labeled === a11y.iconBtns, `${a11y.labeled}/${a11y.iconBtns}`);
-  check('range switch exposes tabs with aria-selected', a11y.tabs === 5, `${a11y.tabs}`);
+  check('the period selector offers every period and is labelled',
+    a11y.periodOptions === 5 && a11y.periodLabelled, `${a11y.periodOptions} options`);
   check('decorative SVG hidden from screen readers', a11y.svgHidden >= 5, `${a11y.svgHidden}`);
   check('buttons are focusable', a11y.focusVisible === true);
 

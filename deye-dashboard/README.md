@@ -147,8 +147,9 @@ prefix. The domain filter only accepts `sensor` and `binary_sensor`, because
 
 ## Periods and history
 
-The chart header carries the whole time selection: `‹ 22 Aug 2026 📅 ›` plus
-`Day / Week / Month / Year / Custom`. Weeks start on Monday; months and years are
+The top bar carries the whole time selection — `‹ 22 Aug 2026 📅 ›` plus a
+period list — because the choice governs the entire page, not just the chart:
+the diagram, the detail cards and every KPI tile follow it. Weeks start on Monday; months and years are
 calendar-exact; a custom interval picks its own resolution — up to 48 hours it
 draws instantaneous power, up to 92 days daily bars, beyond that monthly bars.
 
@@ -241,7 +242,7 @@ The gear icon → Export tab generates ready-made YAML for your own system.
 
 One command runs everything: 160 unit assertions (period arithmetic, energy
 distribution, stored-config migration and the deployment YAML — no browser,
-under a second) and then 142
+under a second) and then 146
 checks in a real Chrome, headless over the Chrome DevTools Protocol with no npm
 dependencies. Link geometry is measured in screen coordinates for all three
 diagram layouts, responsive layout is verified with real device emulation from

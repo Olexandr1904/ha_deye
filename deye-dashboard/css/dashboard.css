@@ -109,8 +109,22 @@
   display: flex; align-items: center; gap: 8px;
   font-size: 15px; font-weight: 650; letter-spacing: .1em;
 }
-.brand-sub { font-size: 11px; color: var(--text-2); letter-spacing: .06em; margin-top: 1px; }
 .topbar-spacer { flex: 1 1 auto; }
+
+/* The period selector in the top bar. It governs the whole page, so it is the
+   first control after the brand — and it must not push the clock, the
+   connection state and the two icon buttons off a phone screen. */
+.topbar-nav { display: flex; align-items: center; min-width: 0; }
+/* Only a custom interval is allowed to push the bar onto a second line. */
+.topbar { flex-wrap: wrap; row-gap: 8px; }
+.topbar .date-nav { gap: 8px; flex-wrap: nowrap; }
+.topbar .nav-period { flex: none; }
+.topbar .nav-label { min-width: 118px; padding: 4px 9px; }
+/* The form controls default to width:100%, which inside a flex row means "take
+   the whole line". Here the period list is one chip among several. */
+.topbar .nav-range-select { flex: none; width: auto; padding: 4px 24px 4px 8px; font-size: 11.5px; }
+.topbar .nav-custom { flex: none; }
+.topbar .nav-range-input { width: 124px; }
 
 .badge {
   font-size: 9.5px; font-weight: 700; letter-spacing: .12em;

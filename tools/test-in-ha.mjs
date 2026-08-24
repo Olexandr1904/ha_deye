@@ -127,23 +127,43 @@ try {
     live.unavailable.join(', ') || 'none');
   check('no warning notices', live.notices.length === 0, live.notices.join(' | ') || 'none');
 
+  group('The period selector inside the HA shell');
+  for (const [w, h] of [[1600, 1000], [1440, 900], [390, 844]]) {
+    await page.setViewport({ width: w, height: h, dpr: 1, mobile: w < 500 });
+    await sleep(1200);
+    const place = await page.eval(`${HELPERS}
+      const chip = q('.topbar .nav-label');
+      const sel = q('.topbar .nav-range-select');
+      const cr = chip.getBoundingClientRect();
+      const sr2 = sel.getBoundingClientRect();
+      return { top: Math.round(cr.top), visible: cr.top >= 0 && cr.bottom <= innerHeight && cr.width > 40,
+               selVisible: sr2.top >= 0 && sr2.bottom <= innerHeight && sr2.width > 30,
+               label: txt('.topbar .nav-label-text'),
+               overflow: document.documentElement.scrollWidth - innerWidth };`);
+    check(`at ${w}x${h} the date and period are on the first screen`,
+      place.visible && place.selVisible && place.overflow <= 1,
+      `top ${place.top}px "${place.label}", overflow ${place.overflow}px`);
+  }
+  await page.setViewport({ width: 1600, height: 1000 });
+  await sleep(1200);
+
   group('History and statistics from Recorder');
   const day = await page.eval(`${HELPERS} return {
     lines: qa('.card-chart path.chart-line').length,
     legend: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
-    label: txt('.card-chart .nav-label-text'),
+    label: txt('.topbar .nav-label-text'),
     empty: q('.card-chart .chart-empty').classList.contains('is-visible'),
     emptyText: txt('.card-chart .chart-empty'),
   };`);
   check('the day chart draws real power lines', day.lines >= 3 && !day.empty,
     `${day.lines} lines, ${day.label}${day.empty ? ` — "${day.emptyText}"` : ''}`);
 
-  await page.eval(`${HELPERS} q('.card-chart [data-range="week"]').click(); return 1;`);
+  await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'week'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await sleep(4000);
   const week = await page.eval(`${HELPERS} return {
     bars: qa('.card-chart rect.chart-bar').length,
     legend: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
-    label: txt('.card-chart .nav-label-text'),
+    label: txt('.topbar .nav-label-text'),
     empty: q('.card-chart .chart-empty').classList.contains('is-visible'),
     emptyText: txt('.card-chart .chart-empty'),
   };`);
@@ -152,9 +172,9 @@ try {
   check('the legend totals the period', week.legend.some((l) => /kWh|МВт|кВт/.test(l)), week.legend.join(' / '));
 
   group('Historical mode');
-  await page.eval(`${HELPERS} q('.card-chart [data-range="day"]').click(); return 1;`);
+  await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'day'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await sleep(2500);
-  await page.eval(`${HELPERS} qa('.card-chart .nav-btn')[0].click(); return 1;`);
+  await page.eval(`${HELPERS} qa('.topbar .nav-btn')[0].click(); return 1;`);
   await sleep(4000);
   const past = await page.eval(`${HELPERS} return {
     mode: q('.app').dataset.mode,

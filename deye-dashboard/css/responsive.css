@@ -47,7 +47,13 @@
 
   .topbar { padding: 7px 9px; gap: 8px; }
   .brand-title-main { font-size: 13px; letter-spacing: .07em; }
-  .brand-sub { display: none; }
+  /* On a phone the period selector earns its space by taking the brand's:
+     the logo mark still identifies the panel. */
+  .brand-text { display: none; }
+  .topbar-nav { flex: 1 1 auto; }
+  .topbar .nav-label { min-width: 0; flex: 1 1 auto; }
+  .topbar .date-nav { width: 100%; gap: 6px; }
+  .topbar .nav-range-select { flex: none; }
   .status-chip { padding: 5px 9px; font-size: 10px; }
   .status-chip .status-text { display: none; }
   .status-chip .dot { width: 8px; height: 8px; }

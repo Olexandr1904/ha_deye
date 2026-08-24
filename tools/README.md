@@ -10,7 +10,7 @@ These files are **not** part of what gets copied into Home Assistant: only the
 ```
 
 Runs the unit tests first (160 assertions, instantly, no browser), then serves
-`deye-dashboard/` over a static server, launches headless Chrome and runs 142
+`deye-dashboard/` over a static server, launches headless Chrome and runs 146
 checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`) and an installed
 Google Chrome.
 
@@ -20,7 +20,7 @@ Google Chrome.
 | `test-config.mjs` | 30 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, and that a merge never loses a pinned entity. |
 | `test-model.mjs` | 42 assertions on `js/power-flow.js` and the counter fallback: link directions, the load-coverage cascade, export attribution (including a generator exporting while the battery charges), and that an unmeasured sensor is never treated as zero. |
 | `test-deploy.py` | 19 assertions on the YAML `deploy.py` writes, including the case that must never regress: a re-deploy without `--entities` keeps the mapping already on the host. |
-| `test-dashboard.mjs` | 142 checks in a real browser (below). |
+| `test-dashboard.mjs` | 146 checks in a real browser (below). |
 | `cdp.mjs` | A 300-line Chrome DevTools Protocol driver: launches the browser on a private profile, emulates devices (a real viewport width and DPR, which `--window-size` cannot give), clicks, reads the shadow DOM, takes screenshots, and collects console errors, exceptions **and** window errors. Kills the process group on exit and on Ctrl-C. |
 
 | Browser group | Examples |
@@ -29,6 +29,7 @@ Google Chrome.
 | Geometry | SVG link endpoints line up with the node edges, measured in screen coordinates, for `wide`, `wideGen` and `narrowGen` |
 | Animation | active flows animate, flows out of the inverter run in reverse, speed follows power, idle flows stop |
 | Chart periods | Day draws lines, Week/Month/Year draw bars, the legend shows period totals, forward navigation stops at today |
+| Selector placement | the date chip and the period list are inside the first screen at 1600, 1440 and 390 px, with no horizontal overflow |
 | Chart interaction | tooltip and crosshair, series toggle off and on |
 | Date navigation | historical mode hides every live card, KPI is recomputed from statistics, `Now` returns, a custom interval loads, the pickers refuse the future, an empty period names its reason |
 | Settings | opens from the gear, four tabs, entity autocomplete, role-match validation, YAML/JSON export |

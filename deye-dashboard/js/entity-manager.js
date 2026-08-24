@@ -64,10 +64,15 @@ export class EntityManager {
       for (const role of roles) this._updateRole(role, stateObj);
       this._emit();
     });
-    // One timer for the whole dashboard: re-evaluate staleness and "N min ago" labels.
-    // This is not sensor polling — states arrive as events.
+    // One timer for the whole dashboard: re-evaluate staleness and "N min ago"
+    // labels. This is not sensor polling — states arrive as events. It emits
+    // unconditionally, because the "ago" label changes with the clock even when
+    // no staleness flag flipped, and because the dashboard needs one guaranteed
+    // heartbeat that does not depend on a sensor reporting or on a frame being
+    // painted (a hidden tab gets neither).
     this._staleTimer = setInterval(() => {
-      if (this._recomputeStale()) this._emit();
+      this._recomputeStale();
+      this._emit();
     }, 30000);
     this.refreshAll();
   }

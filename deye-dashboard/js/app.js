@@ -98,7 +98,13 @@ export class DeyeDashboard {
       }
     });
 
-    this.entityManager.onUpdate(() => this._scheduleUpdate());
+    // The calendar check runs synchronously on every emit; only the rendering
+    // is deferred to a frame. A tab in the background is given no frames, and
+    // that is exactly the tab that is open when midnight passes.
+    this.entityManager.onUpdate(() => {
+      if (this._followCurrentPeriod()) { this._loadPeriod(true); return; }
+      this._scheduleUpdate();
+    });
 
     if (demo) {
       this.client.start();
@@ -161,7 +167,6 @@ export class DeyeDashboard {
 
   _applyUpdate() {
     if (this._destroyed) return;
-    if (this._followCurrentPeriod()) { this._loadPeriod(true); return; }
     const values = this.entityManager.values;
     this.state = this.model.build(values, {
       lastUpdate: this.entityManager.lastUpdate,

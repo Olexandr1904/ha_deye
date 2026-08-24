@@ -1,9 +1,15 @@
 /**
  * date-nav.js — period selector: `‹ label 📅 ›  Now  Day Week Month Year Custom`.
  *
- * Used twice with the same behaviour: in the chart card header and in the
- * per-sensor dialog. It owns no data — it renders a view object from ranges.js
- * and reports the next one through onChange.
+ * Used twice with the same behaviour: in the top bar, where the selection
+ * governs the whole page, and in the per-sensor dialog. It owns no data — it
+ * renders a view object from ranges.js and reports the next one through
+ * onChange.
+ *
+ * The period control comes in two shapes. A row of tabs is one click per period
+ * and is what the dialog uses; a `<select>` is one control regardless of how
+ * many periods there are, which is what fits a top bar that also has to hold a
+ * title, a clock, a connection state and two icon buttons — on a phone as well.
  */
 
 import { h, setText, setAttr, toggleClass } from './utils.js';
@@ -17,14 +23,18 @@ import {
 export class DateNav {
   /**
    * @param {object} opts
-   *   ranges   — which period buttons to show (default: all)
+   *   ranges   — which periods to offer (default: all)
    *   onChange — receives the next view object
-   *   compact  — hides the "Now" button label, used in tight headers
+   *   compact  — tighter spacing, for a header
+   *   switcher — 'tabs' (a row of buttons) or 'select' (one dropdown)
+   *   showNow  — offer the own "Now" button; false where something else does
    */
-  constructor({ ranges = RANGE_KEYS, onChange, compact = false } = {}) {
+  constructor({ ranges = RANGE_KEYS, onChange, compact = false, switcher = 'tabs', showNow = true } = {}) {
     this.ranges = ranges;
     this.onChange = onChange || (() => {});
     this.compact = compact;
+    this.switcher = switcher;
+    this.showNow = showNow;
     this.view = defaultView();
     this.el = this._build();
   }
@@ -83,19 +93,30 @@ export class DateNav {
       this.fromInput, h('span', { class: 'nav-dash', text: '–' }), this.toInput);
 
     this.rangeBtns = {};
-    const switcher = h('div', { class: 'range-switch', role: 'tablist' });
-    for (const key of this.ranges) {
-      const btn = h('button', {
-        class: 'range-btn', type: 'button', role: 'tab', dataset: { range: key },
-        text: t(`range.${key}`),
-        onclick: () => this._emit(withRange(this.view, key)),
-      });
-      this.rangeBtns[key] = btn;
-      switcher.appendChild(btn);
+    this.rangeSelect = null;
+    let switcher;
+    if (this.switcher === 'select') {
+      this.rangeSelect = h('select', {
+        class: 'nav-range-select', 'aria-label': t('nav.period'),
+        onchange: () => this._emit(withRange(this.view, this.rangeSelect.value)),
+      }, ...this.ranges.map((key) => h('option', { value: key, text: t(`range.${key}`) })));
+      switcher = this.rangeSelect;
+    } else {
+      switcher = h('div', { class: 'range-switch', role: 'tablist' });
+      for (const key of this.ranges) {
+        const btn = h('button', {
+          class: 'range-btn', type: 'button', role: 'tab', dataset: { range: key },
+          text: t(`range.${key}`),
+          onclick: () => this._emit(withRange(this.view, key)),
+        });
+        this.rangeBtns[key] = btn;
+        switcher.appendChild(btn);
+      }
     }
 
     return h('div', { class: ['date-nav', this.compact ? 'is-compact' : ''] },
-      h('div', { class: 'nav-period' }, this.prevBtn, this.labelBtn, this.nextBtn, this.todayBtn),
+      h('div', { class: 'nav-period' }, this.prevBtn, this.labelBtn, this.nextBtn,
+        this.showNow ? this.todayBtn : null),
       this.customWrap,
       switcher);
   }
@@ -134,6 +155,9 @@ export class DateNav {
     // "Now" only makes sense while looking at the past.
     setAttr(this.todayBtn, 'hidden', !isHistorical(view));
 
+    if (this.rangeSelect) {
+      if (this.rangeSelect.value !== view.range) this.rangeSelect.value = view.range;
+    }
     for (const [key, btn] of Object.entries(this.rangeBtns)) {
       const active = key === view.range;
       toggleClass(btn, 'is-active', active);
