@@ -8,7 +8,7 @@
  *       sidebar_title: Deye
  *       sidebar_icon: mdi:solar-power-variant
  *       url_path: deye-dashboard
- *       module_url: /local/deye-dashboard/deye-dashboard.js?v=1.0.0
+ *       module_url: /local/deye-dashboard/deye-dashboard.js?v=<version>
  *       embed_iframe: false           # no iframe — the panel lives inside HA
  *       require_admin: false
  *

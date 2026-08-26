@@ -18,7 +18,10 @@
     }
     #dev-errors:empty { display: none; }
   </style>
-  <script type="module" src="./deye-dashboard.js?v=1.0.2"></script>
+  <!-- No ?v= here: this page is for local debugging, where a hard reload is
+       the whole cache strategy. The panel gets its version from panel_custom,
+       and tools/deploy.py stamps every import it copies to the host. -->
+  <script type="module" src="./deye-dashboard.js"></script>
 </head>
 <body>
   <!--
