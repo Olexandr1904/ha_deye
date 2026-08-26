@@ -128,6 +128,16 @@ async function statsWithFallback(client, ids, from, to, period, types) {
 }
 
 /**
+ * Whether a bucket belongs to the window that was asked for.
+ *
+ * `statistics_during_period` is not strict about the far edge: asking for one
+ * local day can come back with the next day's bucket as well, and summing what
+ * arrives then reports two days as one. The window is half-open — the bucket
+ * that starts exactly at `to` belongs to the next period, not this one.
+ */
+function inWindow(ts, from, to) { return ts >= +from && ts < +to; }
+
+/**
  * Energy accumulated per bucket, for bar charts.
  * @param {string} period 'hour' | 'day' | 'month'
  * @returns {Object<string, Array<{start: Date, value: number}>>}
@@ -149,8 +159,16 @@ export async function fetchEnergyBars(client, statIds, from, to, period = 'day')
     const unit = (st && st.attributes && st.attributes.unit_of_measurement) || 'kWh';
     const series = [];
     let prevSum = null;
+    let dropped = 0;
     for (const r of rows) {
       const ts = typeof r.start === 'number' ? r.start : Date.parse(r.start);
+      // The baseline still has to advance through a bucket we do not keep,
+      // otherwise a sum-diff would be taken against the wrong starting point.
+      if (!inWindow(ts, from, to)) {
+        if (r.sum !== undefined && r.sum !== null) prevSum = r.sum;
+        dropped++;
+        continue;
+      }
       let v = null;
       if (r.change !== undefined && r.change !== null) v = r.change;
       else if (r.sum !== undefined && r.sum !== null) v = prevSum === null ? null : r.sum - prevSum;
@@ -163,6 +181,7 @@ export async function fetchEnergyBars(client, statIds, from, to, period = 'day')
       if (n.value === null) continue;
       series.push({ start: new Date(ts), value: Math.max(0, n.value) });
     }
+    if (dropped) log(`${statId}: dropped ${dropped} bucket(s) outside the requested period`);
     if (series.length) out[statId] = series;
   }
   log('energy bars:', Object.entries(out).map(([k, v]) => `${k}=${v.length}`).join(' '));
@@ -175,7 +194,12 @@ export async function fetchEnergyBars(client, statIds, from, to, period = 'day')
  * @returns {Object<string, number>}
  */
 export async function fetchEnergyTotals(client, statIds, from, to, period = 'day') {
-  const bars = await fetchEnergyBars(client, statIds, from, to, period);
+  // Hourly buckets start on the hour, so a window running from local midnight to
+  // local midnight contains a whole number of them however Home Assistant
+  // chooses to align its day buckets. For a day or a week that is exact and
+  // cheap; longer periods stay on the coarser buckets.
+  const days = (to - from) / 86400000;
+  const bars = await fetchEnergyBars(client, statIds, from, to, days <= 8 ? 'hour' : period);
   const out = {};
   for (const [id, rows] of Object.entries(bars)) {
     out[id] = rows.reduce((a, r) => a + r.value, 0);
@@ -203,6 +227,7 @@ export async function fetchSensorStats(client, statId, from, to, period = 'day',
   const out = [];
   for (const r of rows) {
     const ts = typeof r.start === 'number' ? r.start : Date.parse(r.start);
+    if (!inWindow(ts, from, to)) continue;
     const mean = conv(r.mean);
     if (mean === null) continue;
     out.push({

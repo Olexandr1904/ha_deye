@@ -9,7 +9,7 @@ These files are **not** part of what gets copied into Home Assistant: only the
 ./tools/run-tests.sh
 ```
 
-Runs the unit tests first (160 assertions, instantly, no browser), then serves
+Runs the unit tests first (175 assertions, instantly, no browser), then serves
 `deye-dashboard/` over a static server, launches headless Chrome and runs 146
 checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`) and an installed
 Google Chrome.
@@ -19,6 +19,7 @@ Google Chrome.
 | `test-ranges.mjs` | 69 assertions on the calendar arithmetic in `js/ranges.js`: period bounds, Monday weeks, month lengths, DST, resolution choice, navigation clamping. A fixed `now` is threaded through every call, so the suite still passes next year and in any timezone. |
 | `test-config.mjs` | 30 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, and that a merge never loses a pinned entity. |
 | `test-model.mjs` | 42 assertions on `js/power-flow.js` and the counter fallback: link directions, the load-coverage cascade, export attribution (including a generator exporting while the battery charges), and that an unmeasured sensor is never treated as zero. |
+| `test-history.mjs` | 15 assertions on `js/history.js` against a stub Home Assistant, including the boundary defect that made a one-day period report two days of energy, the sum-diff baseline, and unit normalisation. |
 | `test-deploy.py` | 19 assertions on the YAML `deploy.py` writes, including the case that must never regress: a re-deploy without `--entities` keeps the mapping already on the host. |
 | `test-dashboard.mjs` | 146 checks in a real browser (below). |
 | `cdp.mjs` | A 300-line Chrome DevTools Protocol driver: launches the browser on a private profile, emulates devices (a real viewport width and DPR, which `--window-size` cannot give), clicks, reads the shadow DOM, takes screenshots, and collects console errors, exceptions **and** window errors. Kills the process group on exit and on Ctrl-C. |

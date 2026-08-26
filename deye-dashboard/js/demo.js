@@ -264,7 +264,20 @@ export class DemoClient {
         const rows = [];
         // No state_class, no statistics — exactly what Recorder would answer.
         if (!(this._states[id] && this._states[id].attributes.state_class)) { out[id] = rows; continue; }
-        if (period === 'month') {
+        if (period === 'hour') {
+          // The dashboard asks for hourly buckets when a total has to be exact.
+          // A day's energy spread evenly over its hours keeps every sum equal to
+          // the daily figure while exercising the same code path as the real one.
+          const cursor = new Date(from); cursor.setMinutes(0, 0, 0);
+          while (cursor < to) {
+            if (cursor >= INSTALLED) {
+              const row = { start: +cursor, end: +cursor + 3600000, change: pick(id, cursor) / 24 };
+              if (wantsBand) Object.assign(row, this._fakeBand(id, weatherOf(cursor)));
+              rows.push(row);
+            }
+            cursor.setHours(cursor.getHours() + 1);
+          }
+        } else if (period === 'month') {
           const cursor = new Date(from.getFullYear(), from.getMonth(), 1);
           while (cursor < to) {
             const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);

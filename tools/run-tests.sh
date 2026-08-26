@@ -13,6 +13,7 @@ export DEYE_SHOTS="${DEYE_SHOTS:-/tmp/deye-shots}"
 node "$ROOT/tools/test-ranges.mjs"
 node "$ROOT/tools/test-config.mjs"
 node "$ROOT/tools/test-model.mjs"
+node "$ROOT/tools/test-history.mjs"
 python3 "$ROOT/tools/test-deploy.py"
 
 cd "$ROOT/deye-dashboard"

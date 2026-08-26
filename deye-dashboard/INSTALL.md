@@ -1,6 +1,6 @@
 # Installing Deye Dashboard in Home Assistant
 
-> **Already installed on this system** (22 Aug 2026, HA 2025.11.3, dashboard 1.1.1):
+> **Already installed on this system** (22 Aug 2026, HA 2025.11.3, dashboard 1.1.2):
 > files in `/config/www/deye-dashboard/`, the panel is wired up by
 > `/config/packages/deye_dashboard.yaml` (`configuration.yaml` was not touched),
 > 40 entities are pinned there, and the 12 kW rating comes from the attributes of
@@ -55,7 +55,7 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.1
+    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.2
     embed_iframe: false
     require_admin: false
     config:
@@ -75,12 +75,12 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.1
+    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.2
     embed_iframe: false           # important: no iframe, the panel lives inside HA
     require_admin: false
 ```
 
-`?v=1.1.1` only busts the browser cache. Bump it after updating the files (or do a
+`?v=1.1.2` only busts the browser cache. Bump it after updating the files (or do a
 hard reload: Ctrl/Cmd + Shift + R).
 
 ### Automated copying
@@ -172,6 +172,7 @@ The symptom to watch for is the banner "Power balance is off by …".
 | The Day chart is empty for today | Recorder excludes those entities (`recorder: exclude:`) |
 | Flow particles do not move | The system "reduce motion" setting is on; gear icon → Options → Flow animation → `always animate` |
 | Flow directions look wrong | See "Checking the signs" above |
+| A past day's totals look about twice too large | Fixed in 1.1.2. `statistics_during_period` could answer a one-day request with the next day's bucket as well, and the total summed both. Bump `?v=` in `module_url` and hard-reload; compare a past day against the inverter's own "today" counter to confirm. |
 | BATTERY CHARGED / USED read `0.00` while the battery clearly cycles | The inverter's own battery energy registers are stuck — some Deye firmwares leave "today battery charge/discharge" at zero. Map `batteryChargeTotal` / `batteryDischargeTotal` to the lifetime counters as well: the dashboard uses whichever of the two actually moves. If both are stuck (on this 12 kW unit the lifetime pair advances 0.1 kWh a day against a battery that swings 1.8 kW), no counter on the inverter knows the number, so the tiles report what the sensors say instead of guessing. A Riemann-sum integration helper over the battery power sensor gives an estimate, if an estimate is what you want. |
 | Data does not update | Check the status in the header: `RECONNECTING` means the Home Assistant WebSocket is the problem, not the dashboard |
 

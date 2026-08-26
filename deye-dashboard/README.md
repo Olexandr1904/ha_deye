@@ -240,8 +240,8 @@ The gear icon → Export tab generates ready-made YAML for your own system.
 ./tools/run-tests.sh
 ```
 
-One command runs everything: 160 unit assertions (period arithmetic, energy
-distribution, stored-config migration and the deployment YAML — no browser,
+One command runs everything: 175 unit assertions (period arithmetic, energy
+distribution, history windowing, stored-config migration and the deployment YAML — no browser,
 under a second) and then 146
 checks in a real Chrome, headless over the Chrome DevTools Protocol with no npm
 dependencies. Link geometry is measured in screen coordinates for all three
@@ -253,10 +253,13 @@ keyboard activation, accessibility and a clean console. See
 
 There is also a check **inside a running Home Assistant**
 (`tools/test-in-ha.mjs`, which boots the panel in the real HA frontend with live
-inverter data): 22 assertions covering panel
-registration, `panel` mode without an own WebSocket, the power balance, history
-from Recorder, 7-day statistics, diagnostics free of `unavailable`, layout inside
-the HA shell, and `hass-toggle-menu`.
+inverter data): 34 assertions covering panel registration, `panel` mode without
+an own WebSocket, the power balance, history and a week of statistics from
+Recorder, the period selector inside the HA shell, historical mode hiding every
+live card, the sensor dialog on a real entity, diagnostics free of
+`unavailable`, `hass-toggle-menu`, and — the one that earns its keep — every KPI
+tile for a past day checked against the inverter's own daily counter, read
+through the states API so the two paths stay independent.
 
 ## Debugging
 

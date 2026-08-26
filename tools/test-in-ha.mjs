@@ -190,6 +190,43 @@ try {
   check('KPI totals for yesterday come from statistics', past.kpi.length >= 4 && past.dashes < past.kpi.length,
     past.kpi.join(' / '));
 
+  // The cross-check that matters: statistics for a past day must agree with the
+  // inverter's own daily counter, whose last reading before midnight IS that
+  // day's total. Reading it through the states API keeps the two paths
+  // independent — this is what caught a period summing two days as one.
+  const crossCheck = await page.eval(`${HELPERS}
+    const ent = app.config.entities;
+    const bounds = { from: new Date(), to: new Date() };
+    bounds.from.setDate(bounds.from.getDate() - 1); bounds.from.setHours(0, 0, 0, 0);
+    bounds.to.setHours(0, 0, 0, 0);
+    const out = {};
+    for (const [tile, id] of [['gridExport', ent.gridExportToday], ['gridImport', ent.gridImportToday],
+                              ['solar', ent.pvToday], ['consumption', ent.loadToday]]) {
+      if (!id) continue;
+      const hist = await app.client.callWS({
+        type: 'history/history_during_period',
+        start_time: bounds.from.toISOString(), end_time: bounds.to.toISOString(),
+        entity_ids: [id], minimal_response: true, no_attributes: true, significant_changes_only: false,
+      });
+      const pts = (hist && hist[id]) || [];
+      const nums = pts.map(p => parseFloat(p.s !== undefined ? p.s : p.state)).filter(v => Number.isFinite(v));
+      const counterMax = nums.length ? Math.max(...nums) : null;
+      const kpiEl = q('.kpi[data-key="' + tile + '"] .kpi-num');
+      const shown = kpiEl ? parseFloat(kpiEl.textContent.replace(',', '.')) : null;
+      out[tile] = { counterMax, shown };
+    }
+    return out;`);
+  for (const [tile, v] of Object.entries(crossCheck)) {
+    if (v.counterMax === null || !Number.isFinite(v.shown)) {
+      check(`${tile}: no counter history to compare against`, true, 'skipped');
+      continue;
+    }
+    const tol = Math.max(0.5, v.counterMax * 0.06);
+    check(`${tile} for yesterday matches the inverter's own daily counter`,
+      Math.abs(v.shown - v.counterMax) <= tol,
+      `panel ${v.shown} vs counter ${v.counterMax.toFixed(2)} kWh (tolerance ${tol.toFixed(2)})`);
+  }
+
   await page.eval(`${HELPERS} q('.history-now').click(); return 1;`);
   await sleep(3000);
   const backLive = await page.eval(`${HELPERS} return { mode: q('.app').dataset.mode, flow: q('.card-flow').offsetParent !== null };`);
