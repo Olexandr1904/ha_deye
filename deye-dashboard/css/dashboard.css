@@ -204,6 +204,13 @@
   background: color-mix(in srgb, var(--accent-color) 9%, transparent);
   color: var(--text-0);
 }
+
+/* A period that still contains the present is not a warning, only a statement
+   of what the tiles add up: quieter than the historical banner. */
+.history-bar[data-state="partial"] {
+  border-color: var(--border);
+  background: var(--surface);
+}
 .history-bar[hidden] { display: none; }
 .history-icon { display: grid; place-items: center; color: var(--accent-color); flex: none; }
 .history-label { font-size: 12px; font-weight: 700; letter-spacing: .12em; }

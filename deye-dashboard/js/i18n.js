@@ -104,6 +104,7 @@ const EN = {
   /* ── chart ── */
   'chart.power': 'POWER',
   'chart.energy': 'ENERGY',
+  'chart.loadFailed': 'The period could not be loaded',
   'chart.noData': 'No data for this period',
 
   /* ── units (SI symbols; Ukrainian uses Cyrillic ones) ── */
@@ -133,6 +134,8 @@ const EN = {
   'nav.to': 'To',
   'history.viewing': 'VIEWING {period}',
   'history.hint': 'Live values are unavailable for a past period',
+  'history.partial': 'TOTALS FOR {period}',
+  'history.partialHint': 'So far this period — the values below are live',
 
   /* ── generator ── */
   'node.generator': 'GENERATOR',
@@ -367,6 +370,7 @@ const UK = {
 
   'chart.power': 'ПОТУЖНІСТЬ',
   'chart.energy': 'ЕНЕРГІЯ',
+  'chart.loadFailed': 'Не вдалося завантажити період',
   'chart.noData': 'Немає даних за період',
 
   'unit.W': 'Вт',
@@ -393,6 +397,8 @@ const UK = {
   'nav.to': 'До',
   'history.viewing': 'ПЕРІОД {period}',
   'history.hint': 'Поточні значення для минулого періоду недоступні',
+  'history.partial': 'ПІДСУМКИ ЗА {period}',
+  'history.partialHint': 'Від початку періоду — значення нижче поточні',
 
   'node.generator': 'ГЕНЕРАТОР',
   'card.generator': 'ГЕНЕРАТОР',

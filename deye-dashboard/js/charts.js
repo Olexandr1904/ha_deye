@@ -17,6 +17,9 @@ import { t } from './i18n.js';
 const PAD = { top: 18, right: 14, bottom: 26, left: 46 };
 
 class BaseChart {
+  /** The period being shown. Both chart types lay their x axis out from it. */
+  setRange(from, to) { this.from = +from; this.to = +to; }
+
   constructor(host, opts = {}) {
     this.host = host;
     this.opts = opts;
@@ -130,8 +133,6 @@ export class TimeSeriesChart extends BaseChart {
     this.from = opts.from || Date.now() - 86400000;
     this.to = opts.to || Date.now();
   }
-
-  setRange(from, to) { this.from = +from; this.to = +to; }
 
   render() {
     const W = this.width || this.svgWrap.clientWidth;
@@ -282,9 +283,13 @@ export class DailyBarChart extends BaseChart {
     this.svgWrap.innerHTML = '';
     if (!vis.length) return;
 
-    // Shared day scale
+    // Shared bucket scale. It comes from the selected period when there is one,
+    // so a month with data in two of its twelve slots shows two bars where those
+    // months are — building the axis out of the buckets that happen to hold data
+    // would spread them across the whole width and read as a full year.
     const bucket = this.opts.bucket || 'day';
-    const dayKeys = [...new Set(vis.flatMap((sr) => sr.points.map(([t]) => dayKey(t, bucket))))].sort((a, b) => a - b);
+    const dayKeys = bucketsOfPeriod(this.from, this.to, bucket)
+      || [...new Set(vis.flatMap((sr) => sr.points.map(([t]) => dayKey(t, bucket))))].sort((a, b) => a - b);
     let max = 0;
     for (const sr of vis) for (const [, v] of sr.points) if (v > max) max = v;
     const yInfo = niceTicks(0, max || 1, 4);
@@ -353,6 +358,25 @@ export class DailyBarChart extends BaseChart {
 
 /* ───────────────────────── helpers ───────────────────────── */
 
+/**
+ * Every bucket of a period, in calendar order, or null when no period is known.
+ * Stepping with setDate/setMonth keeps it right across DST and month lengths.
+ */
+function bucketsOfPeriod(from, to, bucket) {
+  if (!from || !to || to <= from) return null;
+  const keys = [];
+  const cursor = new Date(from);
+  cursor.setHours(0, 0, 0, 0);
+  if (bucket === 'month') cursor.setDate(1);
+  const limit = bucket === 'month' ? 400 : 500;                 // a sane guard, never reached in practice
+  while (+cursor < +to && keys.length < limit) {
+    keys.push(String(+cursor));
+    if (bucket === 'month') cursor.setMonth(cursor.getMonth() + 1);
+    else cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys.length ? keys : null;
+}
+
 function dayKey(t, bucket) {
   const d = new Date(t);
   d.setHours(0, 0, 0, 0);
@@ -414,3 +438,6 @@ function tooltipTimeLabel(date, span) {
   if (span > 2 * DAY_MS) return `${fmtDayShort(date)}, ${fmtClock(date, false)}`;
   return fmtClock(date, false);
 }
+
+// Exported for the unit tests: the axis is the part most easily got wrong.
+export { bucketsOfPeriod, timeTicks, axisTimeLabel };

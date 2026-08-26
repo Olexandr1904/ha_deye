@@ -11,7 +11,7 @@
 import { RANGE_KEYS } from './ranges.js';
 import { LANGUAGES } from './i18n.js';
 
-export const VERSION = '1.1.3';
+export const VERSION = '1.1.5';
 
 export const STORAGE_KEY = 'deye-dashboard:user-config:v1';
 export const LEARN_KEY = 'deye-dashboard:learned:v1';

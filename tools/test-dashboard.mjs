@@ -241,9 +241,6 @@ try {
   await sleep(600);
 
   const localDate = (expr) => `(() => { const d = ${expr}; return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); })()`;
-  group('The picker matches the period');
-  // Picking a day out of a calendar is useless when the period is a year, and
-  // that is what the platform input can offer, so months and years get a grid.
   const setRange = async (key) => {
     await page.eval(`${HELPERS}
       const sel = q('.topbar .nav-range-select'); sel.value = '${key}';
@@ -251,6 +248,139 @@ try {
     await poll(page, `q('.topbar .nav-range-select').value === '${key}'`, 4000);
     await sleep(500);
   };
+  group('Period consistency: the tiles, the legend and the buckets agree');
+  // The defect that reached the owner: a period total that quietly included the
+  // next period, so a day reported roughly twice its export. Everything here
+  // compares numbers against each other rather than counting shapes.
+  const readPeriod = () => page.eval(`${HELPERS}
+    const toKwh = (text) => {
+      // Doubled escapes: this source is inside a template literal, where \d
+      // would reach the page as a plain 'd'.
+      const m = String(text).match(/(-?[\\d.,]+)\\s*(MWh|kWh|Wh)/i);
+      if (!m) return null;
+      const v = parseFloat(m[1].replace(',', '.'));
+      const u = m[2].toLowerCase();
+      return u === 'mwh' ? v * 1000 : u === 'wh' ? v / 1000 : v;
+    };
+    const tiles = {};
+    for (const el of qa('.kpi:not([hidden])')) {
+      const num = el.querySelector('.kpi-num').textContent.trim();
+      const unit = el.querySelector('.kpi-unit') ? el.querySelector('.kpi-unit').textContent.trim() : '';
+      // Self-sufficiency is a percentage, everything else is energy.
+      tiles[el.dataset.key] = /%/.test(unit) ? parseFloat(num.replace(',', '.')) : toKwh(num + ' ' + unit);
+    }
+    const legend = {};
+    for (const el of qa('.card-chart .chart-legend-item')) {
+      const label = el.querySelector('.chart-legend-label').textContent.trim();
+      legend[label] = toKwh(el.querySelector('.chart-legend-value').textContent.trim());
+    }
+    const bounds = app.chart ? { from: app.chart.from, to: app.chart.to } : null;
+    const series = app.chart && app.chart.series ? app.chart.series.map((sr) => ({
+      key: sr.key, points: sr.points.length,
+      first: sr.points.length ? sr.points[0][0] : null,
+      last: sr.points.length ? sr.points[sr.points.length - 1][0] : null,
+      total: sr.points.reduce((a2, p) => a2 + p[1], 0),
+    })) : [];
+    return {
+      label: txt('.topbar .nav-label-text'), range: q('.topbar .nav-range-select').value,
+      mode: q('.app').dataset.mode,
+      bannerVisible: !q('.history-bar').hidden,
+      bannerState: q('.history-bar').dataset.state,
+      bannerText: txt('.history-bar'),
+      tiles, legend, series, bounds,
+      axisLabels: qa('.card-chart .chart-axis-x text').length || qa('.card-chart text.axis-label').length,
+      bars: qa('.card-chart rect.chart-bar').length,
+      energy: Object.fromEntries(Object.entries(app.energy || {}).map(([k, v]) => [k, { id: v.id, total: v.total, rows: v.rows.length }])),
+    };`);
+
+  const closeEnough = (a2, b2) => a2 !== null && b2 !== null && Math.abs(a2 - b2) <= Math.max(0.6, Math.abs(a2) * 0.02);
+
+  for (const key of ['week', 'month', 'year']) {
+    await setRange(key);
+    await poll(page, `qa('.card-chart rect.chart-bar').length > 0`, 9000);
+    const p = await readPeriod();
+
+    // 1. the tile and the legend are two renderings of one number
+    const pairs = [['solar', 'Solar'], ['consumption', 'House'], ['gridImport', 'Import'], ['gridExport', 'Export']];
+    const mismatched = pairs.filter(([tile, lab]) => !closeEnough(p.tiles[tile], p.legend[lab]));
+    check(`${key}: every KPI tile matches the chart legend`, mismatched.length === 0,
+      mismatched.length
+        ? mismatched.map(([t2, l]) => `${t2} ${p.tiles[t2]} vs ${l} ${p.legend[l]}`).join('; ')
+        : pairs.map(([t2, l]) => `${l} ${Math.round(p.legend[l])}`).join(' '));
+
+    // 2. the legend total is the sum of the bars it drew
+    const drift = p.series.filter((sr) => Math.abs(sr.total - (p.legend[{ pv: 'Solar', load: 'House', import: 'Import', export: 'Export', generator: 'Generator' }[sr.key]] ?? sr.total)) > Math.max(0.6, sr.total * 0.02));
+    check(`${key}: the legend totals the bars it drew`, drift.length === 0,
+      drift.map((sr) => `${sr.key} ${sr.total.toFixed(1)}`).join(' ') || `${p.series.length} series`);
+
+    // 3. every bucket falls inside the period
+    const outside = p.series.filter((sr) => sr.first !== null && (sr.first < p.bounds.from || sr.last >= p.bounds.to));
+    check(`${key}: no bucket lies outside the period`, outside.length === 0,
+      outside.length ? outside.map((sr) => `${sr.key} ${new Date(sr.first).toISOString().slice(0, 10)}..${new Date(sr.last).toISOString().slice(0, 10)}`).join(' ')
+        : `${new Date(p.bounds.from).toISOString().slice(0, 10)} → ${new Date(p.bounds.to).toISOString().slice(0, 10)}`);
+
+    // 4. bars are one per series per bucket that has data
+    const expectedBars = p.series.reduce((a2, sr) => a2 + sr.points, 0);
+    check(`${key}: one bar per bucket per series`, p.bars === expectedBars, `${p.bars} bars, expected ${expectedBars}`);
+
+    // 5. self-sufficiency follows from the two tiles it is derived from
+    const ss = p.tiles.selfSufficiency;
+    const derived = p.tiles.consumption > 0 ? ((p.tiles.consumption - p.tiles.gridImport) / p.tiles.consumption) * 100 : null;
+    check(`${key}: self-sufficiency follows from consumption and import`,
+      derived === null || Math.abs(ss - derived) <= 1.5, `shown ${ss}, derived ${derived === null ? '—' : derived.toFixed(1)}`);
+
+    // 6. the bar naming the period is present, and says which kind of period it is
+    check(`${key}: the period is named above the tiles`,
+      p.bannerVisible && new RegExp(p.label.split(' ')[p.label.split(' ').length - 1]).test(p.bannerText || ''),
+      `${p.bannerState}: ${(p.bannerText || '').slice(0, 52)}`);
+  }
+
+  // A year keeps twelve slots even though the demo's data starts in January and
+  // stops today: the axis is a calendar, not a list of what happens to exist.
+  await setRange('year');
+  await poll(page, `qa('.card-chart rect.chart-bar').length > 0`, 9000);
+  const yearNow = await readPeriod();
+  check('a partial year still lays out every month',
+    yearNow.axisLabels >= 12, `${yearNow.axisLabels} axis labels for ${yearNow.series[0] ? yearNow.series[0].points : 0} months of data`);
+  check('and only the months with data get bars',
+    yearNow.series.every((sr) => sr.points <= 12) && yearNow.series[0].points < 12,
+    yearNow.series.map((sr) => `${sr.key}:${sr.points}`).join(' '));
+
+  // The same period, reached twice, gives the same numbers.
+  const before = await readPeriod();
+  await setRange('week');
+  await poll(page, `qa('.card-chart rect.chart-bar').length > 0`, 9000);
+  await setRange('year');
+  await poll(page, `qa('.card-chart rect.chart-bar').length > 0`, 9000);
+  const again = await readPeriod();
+  check('leaving a period and coming back gives the same totals',
+    closeEnough(before.tiles.solar, again.tiles.solar) && closeEnough(before.tiles.gridExport, again.tiles.gridExport),
+    `solar ${before.tiles.solar} → ${again.tiles.solar}, export ${before.tiles.gridExport} → ${again.tiles.gridExport}`);
+
+  // A past period and the current one must both say what the tiles add up to.
+  await setRange('month');
+  await poll(page, `q('.history-bar').dataset.state === 'partial'`, 9000);
+  const runningMonth = await readPeriod();
+  check('the current month is marked as a running total',
+    runningMonth.mode === 'live' && runningMonth.bannerState === 'partial' && /totals for/i.test(runningMonth.bannerText || ''),
+    `${runningMonth.bannerState}: ${(runningMonth.bannerText || '').slice(0, 60)}`);
+  await page.eval(`${HELPERS} qa('.topbar .nav-btn')[0].click(); return 1;`);
+  await poll(page, `q('.app').dataset.mode === 'history'`, 9000);
+  const closedMonth = await readPeriod();
+  check('and a past month as a closed one',
+    closedMonth.mode === 'history' && closedMonth.bannerState === 'past' && /viewing/i.test(closedMonth.bannerText || ''),
+    `${closedMonth.bannerState}: ${(closedMonth.bannerText || '').slice(0, 60)}`);
+  const pastMismatch = [['solar', 'Solar'], ['consumption', 'House'], ['gridExport', 'Export']]
+    .filter(([tile, lab]) => !closeEnough(closedMonth.tiles[tile], closedMonth.legend[lab]));
+  check('a past month agrees between tiles and legend too', pastMismatch.length === 0,
+    pastMismatch.map(([t2, l]) => `${t2} ${closedMonth.tiles[t2]} vs ${l} ${closedMonth.legend[l]}`).join('; ') || 'all match');
+
+  await setRange('day');
+  await poll(page, `q('.app').dataset.mode === 'live'`, 9000);
+
+  group('The picker matches the period');
+  // Picking a day out of a calendar is useless when the period is a year, and
+  // that is what the platform input can offer, so months and years get a grid.
   const openChip = async () => {
     await page.eval(`${HELPERS} q('.topbar .nav-label').click(); return 1;`);
     await sleep(300);

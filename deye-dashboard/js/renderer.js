@@ -14,7 +14,7 @@ import {
 import { t, getLanguage, LANGUAGES } from './i18n.js';
 import { FLOW_LAYOUTS, LINK_KEYS, pickLayout } from './flow-layout.js';
 import { DateNav } from './date-nav.js';
-import { periodLabel } from './ranges.js';
+import { periodLabel, usesLiveCounters } from './ranges.js';
 
 /**
  * KPI tiles. Values arrive from the app as a plain object, because the source
@@ -104,13 +104,24 @@ export class DashboardRenderer {
     setAttr(el, 'aria-disabled', ok ? null : 'true');
   }
 
-  /** live | history — hides the diagram and the detail cards in history mode. */
+  /**
+   * live | history — hides the diagram and the detail cards in history mode.
+   *
+   * The bar above the grid names the period in both cases, and that matters:
+   * a past month and the current month look different (one has a live diagram,
+   * the other cannot), so the difference has to be stated rather than left for
+   * the reader to work out.
+   */
   setMode(mode, view) {
     setAttr(this.app, 'data-mode', mode);
     const historical = mode === 'history';
-    setAttr(this.r.historyBar, 'hidden', !historical);
-    if (historical && view) {
-      setText(this.r.historyLabel, t('history.viewing', { period: periodLabel(view) }));
+    const partial = !historical && view && !usesLiveCounters(view);
+    setAttr(this.r.historyBar, 'hidden', !historical && !partial);
+    setAttr(this.r.historyBar, 'data-state', historical ? 'past' : 'partial');
+    setAttr(this.r.historyNow, 'hidden', !historical);
+    if (view) {
+      setText(this.r.historyLabel, t(historical ? 'history.viewing' : 'history.partial', { period: periodLabel(view) }));
+      setText(this.r.historyHint, t(historical ? 'history.hint' : 'history.partialHint'));
     }
   }
 
@@ -165,14 +176,14 @@ export class DashboardRenderer {
   _buildNotices() {
     const r = this.r;
     r.historyLabel = h('span', { class: 'history-label' });
-    r.historyBar = h('div', { class: 'history-bar', hidden: true },
+    r.historyHint = h('span', { class: 'history-hint', text: t('history.hint') });
+    r.historyNow = h('button', {
+      class: 'btn btn-ghost history-now', type: 'button', text: t('nav.today'),
+      onclick: () => this.opts.onNow && this.opts.onNow(),
+    });
+    r.historyBar = h('div', { class: 'history-bar', hidden: true, 'data-state': 'past' },
       h('span', { class: 'history-icon', html: icon('calendar', { size: 15 }) }),
-      r.historyLabel,
-      h('span', { class: 'history-hint', text: t('history.hint') }),
-      h('button', {
-        class: 'btn btn-ghost history-now', type: 'button', text: t('nav.today'),
-        onclick: () => this.opts.onNow && this.opts.onNow(),
-      }));
+      r.historyLabel, r.historyHint, r.historyNow);
     r.notices = h('div', { class: 'notices' });
     return h('div', { class: 'above-grid' }, r.historyBar, r.notices);
   }

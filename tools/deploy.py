@@ -21,7 +21,10 @@ What it does:
   2. packages/deye_dashboard.yaml    - the panel_custom block (configuration.yaml is
                                        left alone when it already has
                                        homeassistant: packages: !include_dir_named packages);
-  3. no file is deleted, and the panel package is never allowed to lose settings:
+  3. every relative import in the copied .js gets `?v=<version>`, because
+     Home Assistant serves /local/ with a 31-day cache and only the entry point
+     is version-stamped by panel_custom;
+  4. no file is deleted, and the panel package is never allowed to lose settings:
      a re-deploy without --entities keeps the `config:` block already on the
      system instead of overwriting it, and always leaves a .bak beside it.
 
@@ -32,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,6 +46,39 @@ SKIP = {'.DS_Store'}
 
 
 LANGUAGES = {'en', 'uk', 'auto'}
+
+# Home Assistant serves /local/ with `Cache-Control: public, max-age=2678400`
+# — thirty-one days. Only the panel's entry point carries `?v=` (panel_custom
+# puts it there), so every module it imports would keep being served from the
+# browser cache for a month after an update: a fresh loader pulling in month-old
+# code. The fix has to reach the whole module graph, and since the project has
+# no build step, the version is stamped on the copies that go to the host.
+IMPORT_RE = re.compile(r"""(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(\.{1,2}/[^'"]+?\.js)(['"])""")
+
+
+def version_imports(src: str, version: str) -> tuple[str, int]:
+    """Stamps `?v=<version>` on every relative .js specifier. Returns (text, count).
+
+    Every specifier must be stamped, not just some: a module reached through two
+    different URLs is loaded twice, and two copies of, say, i18n.js would keep
+    two separate current languages.
+    """
+    count = 0
+
+    def sub(m: re.Match) -> str:
+        nonlocal count
+        spec = m.group(3)
+        if '?' in spec:                      # already carries a query
+            return m.group(0)
+        count += 1
+        return f'{m.group(1)}{m.group(2)}{spec}?v={version}{m.group(4)}'
+
+    return IMPORT_RE.sub(sub, src), count
+
+
+def unversioned_imports(src: str) -> list[str]:
+    """Relative .js imports left without a version — the check that matters."""
+    return [m.group(3) for m in IMPORT_RE.finditer(src) if '?' not in m.group(3)]
 
 
 def parse_config_block(text: str) -> list[str]:
@@ -178,10 +215,27 @@ def main() -> int:
     for sub in sorted({os.path.dirname(rel) for _, rel in files if os.path.dirname(rel)}):
         ensure_dir(f'{DEST}/{sub}')
 
+    stamped = 0
     for local, rel in files:
+        if rel.endswith('.js'):
+            with open(local, encoding='utf-8') as src:
+                text, n = version_imports(src.read(), version)
+            left = unversioned_imports(text)
+            if left:
+                print(f'  ! {rel}: could not stamp {left} — aborting rather than '
+                      'shipping a half-versioned module graph', file=sys.stderr)
+                return 1
+            stamped += n
+            with smbclient.open_file(remote(f'{DEST}/{rel}'), mode='w', encoding='utf-8', newline='') as dst:
+                dst.write(text)
+            print(f'  → {DEST}/{rel}' + (f'  ({n} import(s) stamped v={version})' if n else ''))
+            continue
         with open(local, 'rb') as src, smbclient.open_file(remote(f'{DEST}/{rel}'), mode='wb') as dst:
             dst.write(src.read())
         print(f'  → {DEST}/{rel}')
+    if stamped:
+        print(f'\n{stamped} import(s) now carry ?v={version}, so a month-old cached '
+              'module cannot survive this update.')
 
     if write_package:
         ensure_dir('packages')

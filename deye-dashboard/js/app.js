@@ -15,7 +15,7 @@ import { DashboardRenderer } from './renderer.js';
 import { SettingsUI } from './settings-ui.js';
 import { DetailDialog } from './detail-dialog.js';
 import { TimeSeriesChart, DailyBarChart } from './charts.js';
-import { fetchPowerSeries, fetchEnergyBars, fetchEnergyTotals, clearHistoryCache, explainEmpty } from './history.js';
+import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js';
 import { autoDetect } from './discovery.js';
 import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js';
 import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js';
@@ -41,6 +41,7 @@ export class DeyeDashboard {
     // fixed date, so at midnight today's view silently becomes yesterday's — the
     // dashboard would slide into historical mode on its own and stay there.
     this._followNow = true;
+    this.energy = {};                  // per-quantity rows chosen for the selected period
     this.mode = 'live';
     this.periodKpi = null;
     this._lastChartFetch = 0;
@@ -399,16 +400,69 @@ export class DeyeDashboard {
     this._periodBusy = true;
     this.renderer.setChartBusy(true);
     try {
+      this.energy = await this._loadEnergyData(bounds);
       await this._loadChart(bounds, force);
       await this._loadPeriodKpi(bounds);
       this._applyUpdate();
     } catch (e) {
+      // A silent catch here once left the chart blank with no explanation and no
+      // console entry unless debug logging happened to be on. A failure must be
+      // visible in the card and loud in the console.
       warn('could not load the period:', e);
+      console.error('[deye] the period could not be loaded:', e);
+      if (this.chart) { this.chart.setEmptyText(t('chart.loadFailed'), String((e && e.message) || e)); this.chart.setSeries([]); }
     } finally {
       this._periodBusy = false;
       this.renderer.setChartBusy(false);
       if (this._periodQueued) { this._periodQueued = false; this._loadPeriod(true); }
     }
+  }
+
+  /**
+   * Which entities can answer for each energy quantity, best first. A daily
+   * counter is the natural source; the lifetime counter is the fallback for
+   * firmwares that leave the daily one at zero, and for periods that predate
+   * the daily counter's statistics.
+   */
+  _energySources() {
+    const ent = this.config.entities;
+    return {
+      solar: [ent.pvToday, ent.pvTotal],
+      consumption: [ent.loadToday, ent.loadTotal],
+      gridImport: [ent.gridImportToday],
+      gridExport: [ent.gridExportToday],
+      generator: [ent.generatorToday, ent.generatorTotal],
+      batteryCharged: [ent.batteryChargeToday, ent.batteryChargeTotal],
+      batteryUsed: [ent.batteryDischargeToday, ent.batteryDischargeTotal],
+    };
+  }
+
+  /**
+   * Fetches the period once and picks, per quantity, the counter that actually
+   * accounted for the energy. Everything the period shows — the bars, the legend
+   * totals and the KPI tiles — is then derived from the same rows, so the chart
+   * and the tiles cannot disagree about the same period.
+   */
+  async _loadEnergyData(bounds) {
+    const sources = this._energySources();
+    const ids = [...new Set(Object.values(sources).flat().filter(Boolean))];
+    if (!ids.length) return {};
+    // A day is summed from hourly buckets: exact whatever the backend does with
+    // day alignment. Longer periods use the buckets the chart draws.
+    const period = bounds.step === 'power' ? 'hour' : bounds.step;
+    const bars = await fetchEnergyBars(this.client, ids, bounds.from, bounds.to, period);
+    const out = {};
+    for (const [key, candidates] of Object.entries(sources)) {
+      let best = null;
+      for (const id of candidates.filter(Boolean)) {
+        const rows = bars[id];
+        if (!rows || !rows.length) continue;
+        const total = rows.reduce((a, r) => a + r.value, 0);
+        if (!best || total > best.total) best = { id, rows, total };
+      }
+      if (best) out[key] = best;
+    }
+    return out;
   }
 
   async _loadChart(bounds, force) {
@@ -469,32 +523,36 @@ export class DeyeDashboard {
       this.chart = new DailyBarChart(host, { height: chartHeight(), bucket });
       this._chartBucket = bucket;
     }
-    const ent = this.config.entities;
-    const withGen = !!(this.state && this.state.generator && this.state.generator.relevant);
-    const defs = [
-      [ent.pvToday, 'pv', t('src.solar'), 'var(--solar-color)'],
-      [withGen ? ent.generatorToday : null, 'generator', t('src.generator'), 'var(--generator-color)'],
-      [ent.loadToday, 'load', t('src.house'), 'var(--load-color)'],
-      [ent.gridImportToday, 'import', t('series.import'), 'var(--grid-color)'],
-      [ent.gridExportToday, 'export', t('series.export'), 'var(--battery-color)'],
-    ].filter(([id]) => id);
-    if (!defs.length) { this.chart.setSeries([]); return; }
+    // Every bucket of the period gets a slot, whether or not it holds data: the
+    // x axis is a calendar, so two months of data must sit where those months
+    // are, not spread across the year.
+    this.chart.setRange(bounds.from, bounds.to);
     this.chart.setEmptyText(t('chart.noData'));
 
-    const data = await fetchEnergyBars(this.client, defs.map(([id]) => id), bounds.from, bounds.to, bucket);
+    const withGen = !!(this.state && this.state.generator && this.state.generator.relevant);
+    const defs = [
+      ['solar', 'pv', t('src.solar'), 'var(--solar-color)'],
+      [withGen ? 'generator' : null, 'generator', t('src.generator'), 'var(--generator-color)'],
+      ['consumption', 'load', t('src.house'), 'var(--load-color)'],
+      ['gridImport', 'import', t('series.import'), 'var(--grid-color)'],
+      ['gridExport', 'export', t('series.export'), 'var(--battery-color)'],
+    ].filter(([key]) => key);
+
     const series = [];
-    for (const [id, key, label, color] of defs) {
-      const rows = data[id];
-      if (!rows || !rows.length) continue;
-      const total = rows.reduce((a, r) => a + r.value, 0);
+    for (const [srcKey, key, label, color] of defs) {
+      const picked = this.energy[srcKey];
+      if (!picked) continue;
       series.push({
         key, label, color,
-        points: rows.map((r) => [+r.start, r.value]),
-        summary: `${formatEnergy(total).value} ${formatEnergy(total).unit}`,
+        points: picked.rows.map((r) => [+r.start, r.value]),
+        summary: `${formatEnergy(picked.total).value} ${formatEnergy(picked.total).unit}`,
       });
     }
     this.chart.setSeries(series);
-    if (!series.length) await this._explainEmptyChart(bounds, defs.map(([id]) => id));
+    if (!series.length) {
+      const ids = [...new Set(Object.values(this._energySources()).flat().filter(Boolean))];
+      await this._explainEmptyChart(bounds, ids);
+    }
   }
 
   /**
@@ -513,26 +571,9 @@ export class DeyeDashboard {
    * consumption that was not bought from the grid.
    */
   async _loadPeriodKpi(bounds) {
-    const ent = this.config.entities;
-    // Each tile may have a daily counter and a lifetime counter. Both are asked
-    // for, because a period total from statistics is only as good as the sensor
-    // behind it, and the two disagree on some firmwares.
-    const map = {
-      solar: [ent.pvToday, ent.pvTotal], consumption: [ent.loadToday, ent.loadTotal],
-      gridImport: [ent.gridImportToday], gridExport: [ent.gridExportToday],
-      generator: [ent.generatorToday, ent.generatorTotal],
-      batteryCharged: [ent.batteryChargeToday, ent.batteryChargeTotal],
-      batteryUsed: [ent.batteryDischargeToday, ent.batteryDischargeTotal],
-    };
-    const ids = [...new Set(Object.values(map).flat().filter(Boolean))];
-    const period = bounds.step === 'power' ? 'day' : bounds.step;
-    const totals = ids.length ? await fetchEnergyTotals(this.client, ids, bounds.from, bounds.to, period) : {};
-
     const kpi = {};
-    for (const [key, [dailyId, totalId]] of Object.entries(map)) {
-      const daily = dailyId && isNum(totals[dailyId]) ? totals[dailyId] : null;
-      const total = totalId && isNum(totals[totalId]) ? totals[totalId] : null;
-      kpi[key] = preferMovedCounter(daily, total);
+    for (const key of Object.keys(this._energySources())) {
+      kpi[key] = this.energy[key] ? this.energy[key].total : null;
     }
     // Same relevance rule as the live tiles: an installation whose generator
     // sensors read zero should not grow a GENERATOR tile for every past period.

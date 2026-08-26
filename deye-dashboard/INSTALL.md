@@ -1,6 +1,6 @@
 # Installing Deye Dashboard in Home Assistant
 
-> **Already installed on this system** (22 Aug 2026, HA 2025.11.3, dashboard 1.1.3):
+> **Already installed on this system** (22 Aug 2026, HA 2025.11.3, dashboard 1.1.5):
 > files in `/config/www/deye-dashboard/`, the panel is wired up by
 > `/config/packages/deye_dashboard.yaml` (`configuration.yaml` was not touched),
 > 40 entities are pinned there, and the 12 kW rating comes from the attributes of
@@ -55,7 +55,7 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.3
+    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.5
     embed_iframe: false
     require_admin: false
     config:
@@ -75,12 +75,12 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.3
+    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.5
     embed_iframe: false           # important: no iframe, the panel lives inside HA
     require_admin: false
 ```
 
-`?v=1.1.3` only busts the browser cache. Bump it after updating the files (or do a
+`?v=1.1.5` only busts the browser cache. Bump it after updating the files (or do a
 hard reload: Ctrl/Cmd + Shift + R).
 
 ### Automated copying
@@ -168,7 +168,7 @@ The symptom to watch for is the banner "Power balance is off by …".
 | No "Deye" item in the sidebar | `panel_custom` was not applied — a full Home Assistant restart is required; check the YAML indentation |
 | Blank panel | Open the browser console (F12). Most often a 404 on `/local/…`: the files are not in `/config/www/deye-dashboard/` |
 | "Deye Dashboard failed to start" | One of the `js/…` modules did not load — make sure the whole folder was copied |
-| Changes to the files are not visible | Cache: bump `?v=` in `module_url` and do Ctrl/Cmd + Shift + R |
+| Changes to the files are not visible | Home Assistant serves `/local/` with a 31-day cache and `panel_custom` only version-stamps the entry point, so the modules it imports can stay stale for a month. `tools/deploy.py` stamps `?v=` on every import for you; on a manual copy, bump `?v=` in `module_url` **and** hard-reload (Ctrl/Cmd + Shift + R), or check in DevTools → Network that `js/*.js` came from the server rather than the cache |
 | Dashes `—` everywhere | Entities are not mapped (gear icon → Entities) or the sensor is `unavailable` |
 | Week / Month / Year charts are empty | The energy sensors have no long-term statistics (`state_class: total_increasing` is needed) or Recorder excludes them |
 | The Day chart is empty for an old date | Recorder purges detailed states after `purge_keep_days`, while statistics are kept — use Week or Month for older periods |

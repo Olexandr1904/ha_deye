@@ -241,6 +241,65 @@ try {
   const backLive = await page.eval(`${HELPERS} return { mode: q('.app').dataset.mode, flow: q('.card-flow').offsetParent !== null };`);
   check('Now returns to the live view', backLive.mode === 'live' && backLive.flow);
 
+  group('Period consistency on real data');
+  // The tile and the legend are two renderings of one number. On the owner's
+  // system they disagreed by 40 % for 2025, because one read the daily counter
+  // and the other the lifetime one.
+  const readTotals = () => page.eval(`${HELPERS}
+    const toKwh = (text) => {
+      const m = String(text).match(/(-?[\\d.,]+)\\s*(MWh|kWh|Wh)/i);
+      if (!m) return null;
+      const v = parseFloat(m[1].replace(',', '.'));
+      const u = m[2].toLowerCase();
+      return u === 'mwh' ? v * 1000 : u === 'wh' ? v / 1000 : v;
+    };
+    const tiles = {};
+    for (const el of qa('.kpi:not([hidden])')) {
+      const unit = el.querySelector('.kpi-unit') ? el.querySelector('.kpi-unit').textContent.trim() : '';
+      const num = el.querySelector('.kpi-num').textContent.trim();
+      tiles[el.dataset.key] = /%/.test(unit) ? parseFloat(num) : toKwh(num + ' ' + unit);
+    }
+    const legend = {};
+    for (const el of qa('.card-chart .chart-legend-item')) {
+      legend[el.querySelector('.chart-legend-label').textContent.trim()] =
+        toKwh(el.querySelector('.chart-legend-value').textContent.trim());
+    }
+    return { label: txt('.topbar .nav-label-text'), mode: q('.app').dataset.mode, tiles, legend,
+             bars: qa('.card-chart rect.chart-bar').length,
+             series: app.chart && app.chart.series ? app.chart.series.map(s => s.key + ':' + s.points.length) : [],
+             energy: Object.fromEntries(Object.entries(app.energy || {}).map(([k, v]) => [k, v.id])) };`);
+  const near2 = (a2, b2) => a2 !== null && b2 !== null && Math.abs(a2 - b2) <= Math.max(1, Math.abs(a2) * 0.02);
+
+  for (const [name, range, back] of [['this month', 'month', 0], ['last month', 'month', 1],
+                                     ['this year', 'year', 0], ['last year', 'year', 1]]) {
+    await page.eval(`${HELPERS}
+      const sel = q('.topbar .nav-range-select'); sel.value = '${range}';
+      sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
+    await sleep(5000);
+    for (let i = 0; i < back; i++) {
+      await page.eval(`${HELPERS} qa('.topbar .nav-btn')[0].click(); return 1;`);
+      await sleep(5000);
+    }
+    const r = await readTotals();
+    const pairs = [['solar', 'Solar'], ['consumption', 'House'], ['gridImport', 'Import'], ['gridExport', 'Export']];
+    const bad = pairs.filter(([tile, lab]) => r.legend[lab] !== undefined && !near2(r.tiles[tile], r.legend[lab]));
+    check(`${name} (${r.label}): tiles and legend agree`, bad.length === 0,
+      bad.length ? bad.map(([t2, l]) => `${t2} ${r.tiles[t2]} vs ${l} ${r.legend[l]}`).join('; ')
+        : pairs.filter(([, l]) => r.legend[l] !== undefined).map(([, l]) => `${l} ${Math.round(r.legend[l])}`).join(' ') || 'no data');
+    if (r.tiles.consumption > 0 && r.tiles.gridImport !== null) {
+      const derived = ((r.tiles.consumption - r.tiles.gridImport) / r.tiles.consumption) * 100;
+      check(`${name}: self-sufficiency follows from the tiles`,
+        Math.abs(r.tiles.selfSufficiency - derived) <= 1.5,
+        `shown ${r.tiles.selfSufficiency}, derived ${derived.toFixed(1)}`);
+    }
+  }
+  await page.eval(`${HELPERS}
+    const sel = q('.topbar .nav-range-select'); sel.value = 'day';
+    sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
+  await sleep(4000);
+  await page.eval(`${HELPERS} if (q('.history-now') && q('.history-now').offsetParent) q('.history-now').click(); return 1;`);
+  await sleep(4000);
+
   group('Sensor dialog against a real sensor');
   await page.eval(`${HELPERS} q('.card-battery [data-role]').click(); return 1;`);
   await sleep(4000);
