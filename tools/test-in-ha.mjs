@@ -208,9 +208,15 @@ try {
         start_time: bounds.from.toISOString(), end_time: bounds.to.toISOString(),
         entity_ids: [id], minimal_response: true, no_attributes: true, significant_changes_only: false,
       });
+      // history_during_period opens with the state as of start_time, which for a
+      // counter that resets at midnight is still the PREVIOUS day's total. The
+      // day's own total is the last reading before the next midnight.
       const pts = (hist && hist[id]) || [];
-      const nums = pts.map(p => parseFloat(p.s !== undefined ? p.s : p.state)).filter(v => Number.isFinite(v));
-      const counterMax = nums.length ? Math.max(...nums) : null;
+      const samples = pts.map((p) => ({
+        v: parseFloat(p.s !== undefined ? p.s : p.state),
+        t: p.lu !== undefined ? p.lu * 1000 : Date.parse(p.last_updated || p.last_changed),
+      })).filter((x) => Number.isFinite(x.v) && Number.isFinite(x.t) && x.t > +bounds.from && x.t < +bounds.to);
+      const counterMax = samples.length ? samples[samples.length - 1].v : null;
       const kpiEl = q('.kpi[data-key="' + tile + '"] .kpi-num');
       const shown = kpiEl ? parseFloat(kpiEl.textContent.replace(',', '.')) : null;
       out[tile] = { counterMax, shown };
@@ -221,7 +227,10 @@ try {
       check(`${tile}: no counter history to compare against`, true, 'skipped');
       continue;
     }
-    const tol = Math.max(0.5, v.counterMax * 0.06);
+    // The counter's last reading of the day and the statistics for that day are
+    // two independent paths to the same number; a couple of percent covers the
+    // minute between the last sample and midnight.
+    const tol = Math.max(0.3, v.counterMax * 0.03);
     check(`${tile} for yesterday matches the inverter's own daily counter`,
       Math.abs(v.shown - v.counterMax) <= tol,
       `panel ${v.shown} vs counter ${v.counterMax.toFixed(2)} kWh (tolerance ${tol.toFixed(2)})`);

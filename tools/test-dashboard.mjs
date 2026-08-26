@@ -241,24 +241,96 @@ try {
   await sleep(600);
 
   const localDate = (expr) => `(() => { const d = ${expr}; return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); })()`;
+  group('The picker matches the period');
+  // Picking a day out of a calendar is useless when the period is a year, and
+  // that is what the platform input can offer, so months and years get a grid.
+  const setRange = async (key) => {
+    await page.eval(`${HELPERS}
+      const sel = q('.topbar .nav-range-select'); sel.value = '${key}';
+      sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
+    await poll(page, `q('.topbar .nav-range-select').value === '${key}'`, 4000);
+    await sleep(500);
+  };
+  const openChip = async () => {
+    await page.eval(`${HELPERS} q('.topbar .nav-label').click(); return 1;`);
+    await sleep(300);
+    return page.eval(`${HELPERS}
+      const pop = q('.topbar .nav-pop');
+      return {
+        open: !pop.hidden,
+        kind: pop.querySelector('.pop-months') ? 'months' : pop.querySelector('.pop-years') ? 'years' : 'none',
+        cells: qa('.topbar .pop-cell').map(b => b.textContent.trim()),
+        disabled: qa('.topbar .pop-cell[disabled]').length,
+        active: (q('.topbar .pop-cell.is-active') || {}).textContent,
+        head: (q('.topbar .pop-title') || {}).textContent,
+        expanded: q('.topbar .nav-label').getAttribute('aria-expanded'),
+        inputType: q('.topbar .nav-date-input').type,
+      };`);
+  };
+
+  await setRange('month');
+  const monthPick = await openChip();
+  check('a month period offers twelve months, not a calendar of days',
+    monthPick.open && monthPick.kind === 'months' && monthPick.cells.length === 12 && monthPick.head === String(new Date().getFullYear()),
+    `${monthPick.kind}, ${monthPick.cells.length} cells, head ${monthPick.head}`);
+  check('months in the future are not offered', monthPick.disabled === 11 - new Date().getMonth(),
+    `${monthPick.disabled} disabled, current month index ${new Date().getMonth()}`);
+  check('the selected month is marked', !!monthPick.active, `${monthPick.active}`);
+
+  await page.eval(`${HELPERS}
+    const cells = qa('.topbar .pop-cell').filter(b => !b.disabled);
+    cells[0].click(); return 1;`);
+  await poll(page, `q('.topbar .nav-pop').hidden && qa('.card-chart rect.chart-bar').length > 0`, 8000);
+  const monthApplied = await page.eval(`${HELPERS} return {
+    label: txt('.topbar .nav-label-text'), closed: q('.topbar .nav-pop').hidden,
+    bars: qa('.card-chart rect.chart-bar').length, mode: q('.app').dataset.mode };`);
+  check('picking a month applies it and closes the grid',
+    monthApplied.closed && /jan|січ/i.test(monthApplied.label) && monthApplied.bars > 0,
+    `${monthApplied.label}, ${monthApplied.bars} bars, ${monthApplied.mode}`);
+
+  await setRange('year');
+  const yearPick = await openChip();
+  check('a year period offers years', yearPick.open && yearPick.kind === 'years' && yearPick.cells.length === 10,
+    `${yearPick.kind}, ${yearPick.cells.join(' ')}`);
+  check('the newest year comes first and none are in the future',
+    yearPick.cells[0] === String(new Date().getFullYear()), yearPick.cells[0]);
+  const escaped2 = await page.eval(`${HELPERS}
+    q('.topbar .nav-pop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise(r => setTimeout(r, 200));
+    return { hidden: q('.topbar .nav-pop').hidden, expanded: q('.topbar .nav-label').getAttribute('aria-expanded') };`);
+  check('Escape closes the grid', escaped2.hidden === true && escaped2.expanded === 'false');
+
+  await setRange('day');
+  const dayPick = await openChip();
+  check('a day period keeps the platform calendar',
+    dayPick.open === false && dayPick.inputType === 'date', `pop open=${dayPick.open}, input=${dayPick.inputType}`);
+  await sleep(400);
+
   group('Midnight rollover');
   // The view anchor is a date, so at 00:00 "today" silently becomes yesterday.
   // Rewinding the anchor by a day is the same situation and must self-heal —
   // without waiting for a frame, because a background tab is given none.
-  const rolled = await page.eval(`${HELPERS}
-    const before = { view: JSON.parse(JSON.stringify(app.view)), mode: q('.app').dataset.mode };
-    app.view = { ...app.view, anchor: new Date(Date.now() - 86400000) };
-    app.view.anchor.setHours(0, 0, 0, 0);
-    app._followNow = true;                       // as it is while the user has not navigated
-    const healed = app._followCurrentPeriod();
-    return { before, healed, anchor: ${localDate('app.view.anchor')} };`);
+  // Start from where a user who has not navigated would be.
+  await page.eval(`${HELPERS} app.setView({ ...app.view, range: 'day', anchor: new Date() }); return 1;`);
+  await poll(page, `q('.app').dataset.mode === 'live'`, 8000);
+
+  // Exactly what midnight does: the anchor now names a day in the past, and
+  // nothing else changes. No private call and no frame — the healing has to
+  // come from the ordinary update path.
+  await page.eval(`${HELPERS}
+    const y = new Date(); y.setDate(y.getDate() - 1); y.setHours(0, 0, 0, 0);
+    app.view = { ...app.view, anchor: y };
+    app._followNow = true;
+    return 1;`);
   const todayIso = toDateInput(new Date());
-  check('a stale anchor is re-anchored to the current period',
-    rolled.healed === true && rolled.anchor === todayIso, `${rolled.anchor} (wanted ${todayIso})`);
-  await poll(page, `q('.app').dataset.mode === 'live'`, 6000);
+  // Poll on the anchor itself: the DOM still shows the live view from before the
+  // mutation, so waiting on the mode would pass without anything having healed.
+  await poll(page, `${localDate('app.view.anchor')} === '${todayIso}'`, 12000);
   const afterRoll = await page.eval(`${HELPERS} return {
     mode: q('.app').dataset.mode, label: txt('.topbar .nav-label-text'),
-    banner: !q('.history-bar').hidden };`);
+    anchor: ${localDate('app.view.anchor')}, banner: !q('.history-bar').hidden };`);
+  check('a stale anchor is re-anchored to the current period',
+    afterRoll.anchor === todayIso, `${afterRoll.anchor} (wanted ${todayIso})`);
   check('and the page stays live rather than sliding into history',
     afterRoll.mode === 'live' && !afterRoll.banner, `${afterRoll.mode}, ${afterRoll.label}`);
   // A period the user chose deliberately must not be dragged forward.

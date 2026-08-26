@@ -13,12 +13,21 @@
  */
 
 import { h, setText, setAttr, toggleClass } from './utils.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { icon } from './icons.js';
 import {
   RANGE_KEYS, periodLabel, shiftPeriod, canGoForward, withRange,
-  toDateInput, fromDateInput, startOfDay, defaultView, isHistorical,
+  toDateInput, fromDateInput, startOfDay, addMonths, defaultView, isHistorical,
 } from './ranges.js';
+
+/** A short month name in the interface language. */
+function monthShort(date) {
+  try {
+    return new Intl.DateTimeFormat(localeTag(), { month: 'short' }).format(date);
+  } catch (e) {
+    return String(date.getMonth() + 1);
+  }
+}
 
 export class DateNav {
   /**
@@ -59,8 +68,11 @@ export class DateNav {
       onclick: () => { if (canGoForward(this.view)) this._emit(shiftPeriod(this.view, 1)); },
     });
 
-    // A native date input drives the picker; the visible chip shows the period
-    // label, because "August 2026" reads better than "01/08/2026".
+    // Picking a day out of a calendar makes no sense when the period is a month
+    // or a year: the native input only knows days, and `type="month"` is not
+    // supported everywhere. Days and weeks keep the platform calendar (any day
+    // inside a week selects that week); months and years get a small grid of
+    // their own, which behaves the same in every browser.
     this.dateInput = h('input', {
       type: 'date', class: 'nav-date-input',
       onchange: () => {
@@ -69,12 +81,11 @@ export class DateNav {
       },
     });
     this.label = h('span', { class: 'nav-label-text' });
+    this.pop = h('div', { class: 'nav-pop', hidden: true });
     this.labelBtn = h('button', {
-      class: 'nav-label', type: 'button', title: t('nav.pickDate'),
-      onclick: () => {
-        try { this.dateInput.showPicker(); } catch (e) { this.dateInput.focus(); this.dateInput.click(); }
-      },
-    }, this.label, h('span', { class: 'nav-cal', html: icon('calendar', { size: 14 }) }), this.dateInput);
+      class: 'nav-label', type: 'button', title: t('nav.pickDate'), 'aria-expanded': 'false',
+      onclick: (e) => { e.stopPropagation(); this._openPicker(); },
+    }, this.label, h('span', { class: 'nav-cal', html: icon('calendar', { size: 14 }) }), this.dateInput, this.pop);
 
     this.todayBtn = h('button', {
       class: 'btn btn-ghost nav-now', type: 'button', text: t('nav.today'),
@@ -121,6 +132,84 @@ export class DateNav {
       switcher);
   }
 
+  /** Opens whichever picker suits the current range. */
+  _openPicker() {
+    const grid = this.view.range === 'month' ? 'month' : this.view.range === 'year' ? 'year' : null;
+    if (!grid) {
+      this._closePop();
+      try { this.dateInput.showPicker(); } catch (e) { this.dateInput.focus(); this.dateInput.click(); }
+      return;
+    }
+    if (!this.pop.hidden) { this._closePop(); return; }
+    this.pop.innerHTML = '';
+    this.pop.appendChild(grid === 'month' ? this._monthGrid() : this._yearGrid());
+    setAttr(this.pop, 'hidden', false);
+    setAttr(this.labelBtn, 'aria-expanded', 'true');
+    // One listener while open, removed on close: no global state left behind.
+    this._popAway = (ev) => { if (!this.pop.contains(ev.target) && ev.target !== this.labelBtn) this._closePop(); };
+    this._popKeys = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); this._closePop(); this.labelBtn.focus(); } };
+    document.addEventListener('click', this._popAway, true);
+    this.pop.addEventListener('keydown', this._popKeys);
+    const first = this.pop.querySelector('button:not([disabled])');
+    if (first) first.focus();
+  }
+
+  _closePop() {
+    if (!this.pop || this.pop.hidden) return;
+    setAttr(this.pop, 'hidden', true);
+    setAttr(this.labelBtn, 'aria-expanded', 'false');
+    if (this._popAway) { document.removeEventListener('click', this._popAway, true); this._popAway = null; }
+    if (this._popKeys) { this.pop.removeEventListener('keydown', this._popKeys); this._popKeys = null; }
+  }
+
+  /** Twelve months of one year, with a year stepper above them. */
+  _monthGrid() {
+    const now = new Date();
+    const shown = new Date(this.view.anchor);
+    const year = shown.getFullYear();
+    const head = h('div', { class: 'pop-head' },
+      h('button', {
+        class: 'icon-btn nav-btn', type: 'button', 'aria-label': t('nav.prev'),
+        html: icon('chevronLeft', { size: 14 }),
+        onclick: (e) => { e.stopPropagation(); this.view = { ...this.view, anchor: addMonths(this.view.anchor, -12) }; this.pop.innerHTML = ''; this.pop.appendChild(this._monthGrid()); },
+      }),
+      h('span', { class: 'pop-title', text: String(year) }),
+      h('button', {
+        class: 'icon-btn nav-btn', type: 'button', 'aria-label': t('nav.next'),
+        disabled: year >= now.getFullYear(),
+        html: icon('chevronRight', { size: 14 }),
+        onclick: (e) => { e.stopPropagation(); this.view = { ...this.view, anchor: addMonths(this.view.anchor, 12) }; this.pop.innerHTML = ''; this.pop.appendChild(this._monthGrid()); },
+      }));
+    const grid = h('div', { class: 'pop-grid pop-months' });
+    for (let m = 0; m < 12; m++) {
+      const date = new Date(year, m, 1);
+      const future = date > now;
+      grid.appendChild(h('button', {
+        class: ['pop-cell', m === shown.getMonth() ? 'is-active' : ''],
+        type: 'button', disabled: future,
+        text: monthShort(date),
+        onclick: (e) => { e.stopPropagation(); this._closePop(); this._emit({ ...this.view, anchor: date }); },
+      }));
+    }
+    return h('div', {}, head, grid);
+  }
+
+  /** Ten years back from the current one — statistics rarely reach further. */
+  _yearGrid() {
+    const now = new Date();
+    const current = now.getFullYear();
+    const shown = new Date(this.view.anchor).getFullYear();
+    const grid = h('div', { class: 'pop-grid pop-years' });
+    for (let y = current; y > current - 10; y--) {
+      grid.appendChild(h('button', {
+        class: ['pop-cell', y === shown ? 'is-active' : ''],
+        type: 'button', text: String(y),
+        onclick: (e) => { e.stopPropagation(); this._closePop(); this._emit({ ...this.view, anchor: new Date(y, 0, 1) }); },
+      }));
+    }
+    return grid;
+  }
+
   _commitCustom() {
     let from = fromDateInput(this.fromInput.value);
     let to = fromDateInput(this.toInput.value);
@@ -134,6 +223,7 @@ export class DateNav {
   setView(view) {
     this.view = view;
     const isCustom = view.range === 'custom';
+    this._closePop();
 
     // The forward button stops at the current period, so the pickers must too —
     // otherwise a future date is one click away and only ever shows "no data".

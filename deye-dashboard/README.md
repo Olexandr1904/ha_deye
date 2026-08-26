@@ -148,7 +148,8 @@ prefix. The domain filter only accepts `sensor` and `binary_sensor`, because
 ## Periods and history
 
 The top bar carries the whole time selection — `‹ 22 Aug 2026 📅 ›` plus a
-period list — because the choice governs the entire page, not just the chart:
+period list, with a picker that matches the period (a calendar for a day or a
+week, a grid of months for a month, a list of years for a year) — because the choice governs the entire page, not just the chart:
 the diagram, the detail cards and every KPI tile follow it. Weeks start on Monday; months and years are
 calendar-exact; a custom interval picks its own resolution — up to 48 hours it
 draws instantaneous power, up to 92 days daily bars, beyond that monthly bars.
