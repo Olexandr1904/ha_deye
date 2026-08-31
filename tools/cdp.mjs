@@ -3,9 +3,21 @@
  * Node 22+ (global WebSocket). Same protocol chrome-devtools-mcp speaks.
  */
 import { spawn } from 'node:child_process';
-import { writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync, rmSync, existsSync } from 'node:fs';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+/**
+ * Where Chrome is. `CHROME=/path/to/chrome` wins, so CI (and anyone not on a
+ * Mac) does not have to patch this file.
+ */
+const CHROME = process.env.CHROME || [
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/snap/bin/chromium',
+].find((p) => existsSync(p)) || 'google-chrome';
 
 export class Browser {
   static async launch({ port, headless = true, profile } = {}) {

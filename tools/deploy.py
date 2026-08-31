@@ -10,14 +10,15 @@ works without mounting anything at all.
     pip install smbprotocol
 
     # show what would happen, write nothing
-    python3 tools/deploy.py --host homeassistant.local --user alex --password-file .smb --dry-run
+    python3 tools/deploy.py --host homeassistant.local --user <samba-user> --password-file .smb --dry-run
 
     # copy the files and write the panel package
-    python3 tools/deploy.py --host homeassistant.local --user alex --password-file .smb \
+    python3 tools/deploy.py --host homeassistant.local --user <samba-user> --password-file .smb \
         --entities /tmp/mapping.json --rated-power 12
 
 What it does:
-  1. www/deye-dashboard/...          - panel files (creates directories as needed);
+  1. www/deye-dashboard/...          - the packaged panel from dist/ (run
+                                       `node tools/build-dist.mjs` first);
   2. packages/deye_dashboard.yaml    - the panel_custom block (configuration.yaml is
                                        left alone when it already has
                                        homeassistant: packages: !include_dir_named packages);
@@ -36,10 +37,14 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(REPO, 'deye-dashboard')
+# The packaged copy, not the source tree: one artefact reaches every host the
+# same way, whether it arrives through HACS, by hand or through this script.
+SRC = os.path.join(REPO, 'dist')
+ENTRY = 'ha_deye.js'
 DEST = 'www/deye-dashboard'
 PACKAGE = 'packages/deye_dashboard.yaml'
 SKIP = {'.DS_Store'}
@@ -109,7 +114,7 @@ def build_package_yaml(entities: dict | None, rated_power: float | None, version
                        language: str | None = None, keep_config: list[str] | None = None) -> str:
     lines = [
         '# Deye Dashboard - a local panel for the solar system.',
-        f'# Files: /config/{DEST}/ (README.md and INSTALL.md live there too).',
+        f'# Files: /config/{DEST}/ — the packaged panel; docs live in the repository.',
         '# Picked up via homeassistant: packages: !include_dir_named packages',
         '# To remove the panel: delete this file and restart Home Assistant.',
         '',
@@ -118,7 +123,7 @@ def build_package_yaml(entities: dict | None, rated_power: float | None, version
         '    sidebar_title: Deye',
         '    sidebar_icon: mdi:solar-power-variant',
         '    url_path: deye-dashboard',
-        f'    module_url: /local/deye-dashboard/deye-dashboard.js?v={version}',
+        f'    module_url: /local/{DEST.split("/", 1)[1]}/{ENTRY}?v={version}',
         '    embed_iframe: false           # no iframe: the panel lives inside HA',
         '    require_admin: false',
     ]
@@ -154,7 +159,7 @@ def local_files() -> list[tuple[str, str]]:
 
 
 def read_version() -> str:
-    path = os.path.join(SRC, 'js', 'config.js')
+    path = os.path.join(REPO, 'deye-dashboard', 'js', 'config.js')
     with open(path, encoding='utf-8') as f:
         for line in f:
             if line.startswith('export const VERSION'):
@@ -174,6 +179,14 @@ def main() -> int:
     ap.add_argument('--no-package', action='store_true', help='files only, no panel_custom')
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
+
+    # A stale package is the one mistake this script must not make quietly.
+    build = subprocess.run([sys.executable and 'node', os.path.join(REPO, 'tools', 'build-dist.mjs'), '--check'],
+                           capture_output=True, text=True)
+    if build.returncode != 0:
+        print(build.stdout.strip() or build.stderr.strip(), file=sys.stderr)
+        print('\nRun `node tools/build-dist.mjs` first.', file=sys.stderr)
+        return 1
 
     files = local_files()
     version = read_version()
@@ -236,6 +249,31 @@ def main() -> int:
     if stamped:
         print(f'\n{stamped} import(s) now carry ?v={version}, so a month-old cached '
               'module cannot survive this update.')
+
+    # Nothing is deleted, ever — but a file the package no longer contains is
+    # stale code sitting in a served directory, and the operator should know.
+    shipped = {rel for _, rel in files}
+    leftovers = []
+
+    def walk(rel_dir: str) -> None:
+        for entry in smbclient.scandir(remote(f'{DEST}/{rel_dir}' if rel_dir else DEST)):
+            rel = f'{rel_dir}/{entry.name}' if rel_dir else entry.name
+            if entry.is_dir():
+                walk(rel)
+            elif rel not in shipped:
+                leftovers.append(rel)
+
+    try:
+        walk('')
+    except Exception as e:                      # listing is a courtesy, never fatal
+        print(f'  (could not list the remote directory: {e})')
+    if leftovers:
+        print(f'\n{len(leftovers)} file(s) in {DEST}/ are not part of this package '
+              '(left in place, delete them if you want):')
+        for rel in sorted(leftovers)[:40]:
+            print(f'  - {rel}')
+        if len(leftovers) > 40:
+            print(f'  … and {len(leftovers) - 40} more')
 
     if write_package:
         ensure_dir('packages')

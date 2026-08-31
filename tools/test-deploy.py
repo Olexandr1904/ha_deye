@@ -32,7 +32,7 @@ ENTITIES = {'pvPower': 'sensor.inverter_pv_power', 'batterySoc': 'sensor.inverte
 
 full = deploy.build_package_yaml(ENTITIES, 12, '1.1.0', 'en')
 check('the panel block is written', 'panel_custom:' in full and 'name: deye-dashboard' in full)
-check('the module url carries the version', 'deye-dashboard.js?v=1.1.0' in full)
+check('the module url carries the version', 'ha_deye.js?v=1.1.0' in full)
 check('no iframe', 'embed_iframe: false' in full)
 check('every entity is pinned', all(v in full for v in ENTITIES.values()))
 check('the rating is written', 'ratedPowerKw: 12' in full)
@@ -48,7 +48,7 @@ plain = deploy.build_package_yaml(None, None, '1.1.1', None, kept)
 check('a re-deploy without --entities keeps the entities', all(v in plain for v in ENTITIES.values()))
 check('a re-deploy keeps the rating', 'ratedPowerKw: 12' in plain)
 check('a re-deploy keeps the language', 'language: en' in plain)
-check('a re-deploy still updates the version', 'deye-dashboard.js?v=1.1.1' in plain and '1.1.0' not in plain)
+check('a re-deploy still updates the version', 'ha_deye.js?v=1.1.1' in plain and '1.1.0' not in plain)
 
 # Values given on the command line replace the block instead of duplicating it.
 replaced = deploy.build_package_yaml({'pvPower': 'sensor.other'}, None, '1.1.1', None, kept)

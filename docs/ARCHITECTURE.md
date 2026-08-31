@@ -135,7 +135,7 @@ Everything else is optional and simply hides when the entity is missing:
 `inverterPower`, `inverterTemperature`, `inverterStatus`, `inverterAlarm`,
 `phaseA/B/C Power/Voltage/Current`.
 
-The full list with auto-detection hints lives in [js/config.js](js/config.js).
+The full list with auto-detection hints lives in [js/config.js](../deye-dashboard/js/config.js).
 
 Auto-detection works in three steps: filter by domain and unit / `device_class`,
 score by keywords, then a second pass with a bonus for a shared `entity_id`
@@ -238,7 +238,7 @@ The gear icon → Export tab generates ready-made YAML for your own system.
 ## Tests
 
 The plan behind them, and what is deliberately not covered, is in
-[docs/test-plan.md](../docs/test-plan.md).
+[test-plan.md](test-plan.md).
 
 ```bash
 ./tools/run-tests.sh

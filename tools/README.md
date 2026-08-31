@@ -1,7 +1,24 @@
 # tools/ — dashboard tooling
 
-These files are **not** part of what gets copied into Home Assistant: only the
-`deye-dashboard/` folder goes to `/config/www/`.
+These files are **not** part of what gets copied into Home Assistant. What goes
+to a host is `dist/`, generated from `deye-dashboard/` by `build-dist.mjs`.
+
+## Building the package
+
+```bash
+node tools/build-dist.mjs           # regenerate dist/
+node tools/build-dist.mjs --check   # fail if dist/ no longer matches the source
+```
+
+There is no build step for development — the panel runs from source as plain ES
+modules. `dist/` exists because HACS copies only the `.js` files it finds in one
+directory for a dashboard plugin: a package that linked `css/*.css` would arrive
+unstyled, and modules under `js/` would not arrive at all. So the generator
+flattens the modules, inlines the three stylesheets into the entry point, names it
+after the repository (`ha_deye.js`, which is what HACS looks for) and stamps every
+import with the version. `--check` keeps a committed `dist/` honest: CI runs it,
+and the browser suite runs a second time against `dist/`, so the package is tested
+rather than assumed.
 
 ## Tests
 
@@ -14,8 +31,9 @@ is in [docs/test-plan.md](../docs/test-plan.md).
 
 Runs the unit tests first (217 assertions, instantly, no browser), then serves
 `deye-dashboard/` over a static server, launches headless Chrome and runs 181
-checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`) and an installed
-Google Chrome.
+checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`)
+and an installed Chrome or Chromium — set `CHROME=/path/to/chrome` if it is not
+where the driver looks.
 
 | File | What it covers |
 |---|---|
@@ -59,8 +77,8 @@ python3 tools/deploy.py --host homeassistant.local --user <user> \
     --password-file .smb --entities mapping.json --rated-power 12 [--dry-run]
 ```
 
-Copies the dashboard into `/config/www/deye-dashboard/` over SMB (the "Samba
-share" add-on) and writes `/config/packages/deye_dashboard.yaml` with the
+Copies `dist/` into `/config/www/deye-dashboard/` over SMB (the "Samba
+share" add-on), refusing to run if `dist/` is out of date and writes `/config/packages/deye_dashboard.yaml` with the
 `panel_custom` block, leaving `configuration.yaml` untouched. Needs
 `pip install smbprotocol`.
 

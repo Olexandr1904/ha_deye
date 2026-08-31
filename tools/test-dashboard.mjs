@@ -91,8 +91,11 @@ try {
   };`);
   check('values rendered', values.solar !== '—' && values.status === 'ONLINE', JSON.stringify(values).slice(0, 190));
   check('SOC matches in the node and the card', values.battery === values.battCard, `${values.battery} / ${values.battCard}`);
+  // Compared as numbers: "100.0" and "100" are the same reading formatted
+  // differently, and the point of the check is the value, not the rounding.
   check('the first paint already agrees with the entity state',
-    values.battery === values.socEntity, `node ${values.battery} vs entity ${values.socEntity}`);
+    Math.abs(parseFloat(values.battery) - parseFloat(values.socEntity)) < 0.06,
+    `node ${values.battery} vs entity ${values.socEntity}`);
 
   // The generator produced nothing by 13:30, so nothing about it may be on screen.
   const genOff = await page.eval(`${HELPERS} return {

@@ -1,0 +1,25 @@
+name: Idea
+description: Something the dashboard should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check CONTRIBUTING.md first — several tempting ideas (cloud data,
+        a backend, polling, a charting library) are ruled out by design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to see or do?
+      description: The situation, not the solution — that usually leads somewhere better.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How you imagine it working
+  - type: input
+    id: entities
+    attributes:
+      label: Which entities would it need?
+      placeholder: "sensor.inverter_… — and whether they have a state_class"

@@ -23,6 +23,15 @@ import { t, setLanguage, resolveLanguage } from './js/i18n.js';
 
 const BASE = new URL('.', import.meta.url);
 const CSS_FILES = ['css/dashboard.css', 'css/components.css', 'css/responsive.css'];
+/**
+ * The packaged build carries its stylesheets here instead of alongside as .css.
+ *
+ * HACS copies only `.js` files for a dashboard plugin, so a package that linked
+ * to css/*.css would arrive unstyled. `tools/build-dist.mjs` replaces this one
+ * line with the concatenated stylesheets; in the source tree it stays empty and
+ * the three files are linked as usual.
+ */
+const INLINE_CSS = '';
 const DEMO_KEY = 'deye-dashboard:demo';
 const CONN_KEY = 'deye-dashboard:connection';
 
@@ -107,6 +116,12 @@ class DeyeDashboardPanel extends HTMLElement {
   }
 
   async _injectStyles() {
+    if (INLINE_CSS) {
+      const style = document.createElement('style');
+      style.textContent = INLINE_CSS;
+      this.shadowRoot.append(style);
+      return;
+    }
     const links = CSS_FILES.map((file) => {
       const link = document.createElement('link');
       link.rel = 'stylesheet';

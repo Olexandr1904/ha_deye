@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Calendar arithmetic, config migration, energy distribution, history, axes
+        run: |
+          node tools/test-ranges.mjs
+          node tools/test-config.mjs
+          node tools/test-model.mjs
+          node tools/test-history.mjs
+          node tools/test-charts.mjs
+      - name: Deployment YAML and import stamping
+        run: python3 tools/test-deploy.py
+      - name: dist/ matches the source
+        run: node tools/build-dist.mjs --check
+
+  # The same suite twice: against the source tree, and against the packaged
+  # dist/ that HACS and manual installs actually get. A package that is stale or
+  # subtly different is exactly the failure a source-only run cannot see.
+  browser:
+    name: browser (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: source
+            dir: deye-dashboard
+          - target: dist
+            dir: dist
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Serve ${{ matrix.dir }}
+        run: |
+          python3 -m http.server 8899 --bind 127.0.0.1 --directory ${{ matrix.dir }} &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8899/index.html && break; sleep 0.25; done
+      - name: Run the suite
+        env:
+          CHROME: /usr/bin/google-chrome
+          DEYE_ORIGIN: http://127.0.0.1:8899
+          DEYE_SHOTS: ${{ runner.temp }}/shots
+        run: node tools/test-dashboard.mjs
+      - name: Screenshots from the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ matrix.target }}
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore

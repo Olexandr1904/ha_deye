@@ -1,0 +1,48 @@
+name: Bug report
+description: Something shows the wrong number, or does not show at all
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A number that disagrees with another source is the most useful report
+        there is. Please include both figures.
+  - type: input
+    id: version
+    attributes:
+      label: Dashboard version
+      description: The gear icon → Diagnostics shows it, or the `?v=` in your `module_url`.
+      placeholder: "1.1.5"
+    validations:
+      required: true
+  - type: input
+    id: ha
+    attributes:
+      label: Home Assistant version
+      placeholder: "2025.11.3"
+    validations:
+      required: true
+  - type: input
+    id: integration
+    attributes:
+      label: How the inverter is integrated
+      placeholder: "ha-solarman 0.x / Modbus / MQTT"
+  - type: textarea
+    id: what
+    attributes:
+      label: What you saw, and what you expected
+      description: If it is a number, say where the other figure came from and which period.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Support report
+      description: Gear icon → Diagnostics → Copy support report. It contains no secrets.
+      render: text
+  - type: textarea
+    id: console
+    attributes:
+      label: Browser console
+      description: F12 → Console. Errors from the panel are prefixed `[deye]`.
+      render: text

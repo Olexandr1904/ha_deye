@@ -16,6 +16,7 @@ node "$ROOT/tools/test-model.mjs"
 node "$ROOT/tools/test-history.mjs"
 node "$ROOT/tools/test-charts.mjs"
 python3 "$ROOT/tools/test-deploy.py"
+node "$ROOT/tools/build-dist.mjs" --check
 
 cd "$ROOT/deye-dashboard"
 python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 &

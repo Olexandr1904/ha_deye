@@ -1,31 +1,32 @@
 # Installing Deye Dashboard in Home Assistant
 
-> **Already installed on this system** (22 Aug 2026, HA 2025.11.3, dashboard 1.1.5):
-> files in `/config/www/deye-dashboard/`, the panel is wired up by
-> `/config/packages/deye_dashboard.yaml` (`configuration.yaml` was not touched),
-> 40 entities are pinned there, and the 12 kW rating comes from the attributes of
-> `sensor.inverter_device`. The **Deye** item is in the sidebar.
-> To update after a code change: `python3 tools/deploy.py …` plus a Home Assistant restart.
-
 Requirements: Home Assistant 2023.4 or newer (the WebSocket commands
 `history/history_during_period` and `recorder/statistics_during_period` are needed).
 No internet access is required, neither during installation nor at runtime.
 
 ---
 
-## Step 1. Copy the files
+## Step 1. Get the files onto the host
 
-Put the `deye-dashboard` folder into the `www` directory of your Home Assistant
-configuration:
+Two ways, and they put the same package in different places.
+
+**Through HACS** (recommended): HACS → three-dot menu → Custom repositories → add
+`https://github.com/Olexandr1904/ha_deye`, category **Dashboard**, then download
+**Deye Dashboard**. The files land in `/config/www/community/ha_deye/`, served as
+`/hacsfiles/ha_deye/`. Updates then arrive through HACS.
+
+**By hand**: copy the contents of the repository's `dist/` directory into
+`/config/www/deye-dashboard/`:
 
 ```text
 /config/www/deye-dashboard/
-    deye-dashboard.js
-    index.html
-    js/…
-    css/…
-    assets/…
+    ha_deye.js        the entry point named in module_url
+    app.js, config.js, …   the modules, flat
+    index.html        standalone page for debugging
 ```
+
+`dist/` is generated from the sources by `node tools/build-dist.mjs`; it is the
+same code with the stylesheets inlined, because HACS copies only `.js` files.
 
 If `/config/www` does not exist, create it (after creating it Home Assistant needs
 one restart before `/local/` starts serving files).
@@ -33,11 +34,12 @@ one restart before `/local/` starts serving files).
 Ways to copy: File editor / Samba / the VS Code add-on / `scp`:
 
 ```bash
-scp -r deye-dashboard root@homeassistant.local:/config/www/
+scp -r dist/* root@homeassistant.local:/config/www/deye-dashboard/
 ```
 
-Check: open `http://homeassistant.local:8123/local/deye-dashboard/deye-dashboard.js`
-— it must return the script text, not a 404.
+Check: open `http://homeassistant.local:8123/local/deye-dashboard/ha_deye.js`
+— it must return the script text, not a 404. (For a HACS install the path is
+`/hacsfiles/ha_deye/ha_deye.js`.)
 
 ---
 
@@ -55,7 +57,7 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.5
+    module_url: /local/deye-dashboard/ha_deye.js?v=1.2.0
     embed_iframe: false
     require_admin: false
     config:
@@ -75,12 +77,12 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /local/deye-dashboard/deye-dashboard.js?v=1.1.5
+    module_url: /local/deye-dashboard/ha_deye.js?v=1.2.0
     embed_iframe: false           # important: no iframe, the panel lives inside HA
     require_admin: false
 ```
 
-`?v=1.1.5` only busts the browser cache. Bump it after updating the files (or do a
+`?v=1.2.0` only busts the browser cache. Bump it after updating the files (or do a
 hard reload: Ctrl/Cmd + Shift + R).
 
 ### Automated copying
@@ -168,7 +170,7 @@ The symptom to watch for is the banner "Power balance is off by …".
 | No "Deye" item in the sidebar | `panel_custom` was not applied — a full Home Assistant restart is required; check the YAML indentation |
 | Blank panel | Open the browser console (F12). Most often a 404 on `/local/…`: the files are not in `/config/www/deye-dashboard/` |
 | "Deye Dashboard failed to start" | One of the `js/…` modules did not load — make sure the whole folder was copied |
-| Changes to the files are not visible | Home Assistant serves `/local/` with a 31-day cache and `panel_custom` only version-stamps the entry point, so the modules it imports can stay stale for a month. `tools/deploy.py` stamps `?v=` on every import for you; on a manual copy, bump `?v=` in `module_url` **and** hard-reload (Ctrl/Cmd + Shift + R), or check in DevTools → Network that `js/*.js` came from the server rather than the cache |
+| Changes to the files are not visible | Home Assistant serves `/local/` with a 31-day cache and `panel_custom` only version-stamps the entry point, so the modules it imports can stay stale for a month. `tools/deploy.py` stamps `?v=` on every import for you; on a manual copy, bump `?v=` in `module_url` **and** hard-reload (Ctrl/Cmd + Shift + R), or check in DevTools → Network that the modules came from the server rather than the cache |
 | Dashes `—` everywhere | Entities are not mapped (gear icon → Entities) or the sensor is `unavailable` |
 | Week / Month / Year charts are empty | The energy sensors have no long-term statistics (`state_class: total_increasing` is needed) or Recorder excludes them |
 | The Day chart is empty for an old date | Recorder purges detailed states after `purge_keep_days`, while statistics are kept — use Week or Month for older periods |
