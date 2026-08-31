@@ -1,5 +1,9 @@
 # Deye Dashboard for Home Assistant
 
+[![tests](https://github.com/Olexandr1904/ha_deye/actions/workflows/tests.yml/badge.svg)](https://github.com/Olexandr1904/ha_deye/actions/workflows/tests.yml)
+[![hacs](https://img.shields.io/badge/HACS-custom%20repository-41BDF5)](https://hacs.xyz/)
+[![licence](https://img.shields.io/badge/licence-MIT-black)](LICENSE)
+
 A local dashboard for a Deye hybrid inverter, as a real Home Assistant panel:
 an animated energy-flow diagram, battery / grid / load / generator cards, KPI
 totals for any period, and a chart you can drill into down to a single sensor.
