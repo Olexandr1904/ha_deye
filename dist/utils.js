@@ -1,7 +1,7 @@
 /** utils.js — formatting, DOM/SVG helpers, chart maths. */
 
-import { UNIT_FACTORS, CANONICAL_UNITS } from './config.js?v=1.2.0';
-import { t, localeTag } from './i18n.js?v=1.2.0';
+import { UNIT_FACTORS, CANONICAL_UNITS } from './config.js?v=1.2.1';
+import { t, localeTag } from './i18n.js?v=1.2.1';
 
 /* ───────────────────────────── logging ───────────────────────────── */
 

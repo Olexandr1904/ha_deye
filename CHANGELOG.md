@@ -4,6 +4,15 @@ All notable changes to this project. Versions are the `VERSION` constant in
 `deye-dashboard/js/config.js`, which is also the cache-busting query the panel is
 loaded with.
 
+## 1.2.1
+
+* One finger scrolls the page again on a phone. Inside Home Assistant the panel
+  is not given a height, so the page scrolls rather than the panel — but the
+  panel still refused to hand a swipe on to the page, and only a two-finger drag
+  got through. The same affected a mouse wheel or a trackpad when the page was
+  taller than the window. If your `panel_custom` entry carries `?v=1.2.0`, change
+  it to `?v=1.2.1`, or the browser keeps the old code.
+
 ## 1.1.5
 
 * One period, one number. The KPI tiles and the chart legend used to read

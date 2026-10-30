@@ -669,6 +669,40 @@ try {
   const winErrs = await page.windowErrors();
   check('no window errors after all the resizes', winErrs.length === 0, winErrs.join(' | ') || 'clean');
 
+  /* ─────────────── 7a. one finger scrolls the page ─────────────── */
+  group('Touch scrolling (one finger)');
+  await page.setViewport({ width: 390, height: 844, dpr: 3, mobile: true });
+  await sleep(700);
+  const swipe = async () => {
+    await page.eval(`${HELPERS} host.scrollTop = 0; document.scrollingElement.scrollTop = 0; return 1;`);
+    await page.send('Input.synthesizeScrollGesture', { x: 195, y: 600, yDistance: -300, gestureSourceType: 'touch', speed: 800 });
+    await sleep(500);
+    return page.eval(`${HELPERS} return { host: Math.round(host.scrollTop), doc: Math.round(document.scrollingElement.scrollTop) };`);
+  };
+  const ownScroller = await swipe();
+  check('standalone: a one-finger swipe scrolls the panel', ownScroller.host > 100, `panel ${ownScroller.host}px, page ${ownScroller.doc}px`);
+
+  // Home Assistant does not size a custom panel: its parent, <ha-panel-custom>,
+  // is a block with height: auto, so the panel grows to its content and the
+  // document is what scrolls. Reproduce that container here. A panel that is a
+  // scroll container with nothing to scroll and also refuses to chain the scroll
+  // swallows a one-finger swipe — and only a two-finger (pinch) pan gets through.
+  await page.eval(`${HELPERS}
+    const wrap = document.createElement('div');
+    wrap.id = 'ha-like-parent';
+    host.before(wrap); wrap.append(host);
+    document.body.style.overflow = 'visible';
+    return 1;`);
+  await sleep(500);
+  const inShell = await swipe();
+  check('inside Home Assistant: a one-finger swipe scrolls the page', inShell.doc > 100, `page ${inShell.doc}px, panel ${inShell.host}px`);
+  await page.eval(`${HELPERS}
+    const wrap = document.getElementById('ha-like-parent');
+    wrap.before(host); wrap.remove();
+    document.body.style.overflow = '';
+    document.scrollingElement.scrollTop = 0;
+    return 1;`);
+
   /* ─────────────── 8. extreme values ─────────────── */
   group('Extreme values and broken data');
   await page.setViewport({ width: 1600, height: 1000 });
