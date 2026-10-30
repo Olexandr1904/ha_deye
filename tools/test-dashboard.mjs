@@ -669,13 +669,14 @@ try {
   const winErrs = await page.windowErrors();
   check('no window errors after all the resizes', winErrs.length === 0, winErrs.join(' | ') || 'clean');
 
-  /* ─────────────── 7a. one finger scrolls the page ─────────────── */
-  group('Touch scrolling (one finger)');
+  /* ─────────────── 7a. scrolling: one finger, and the top bar stays ─────────────── */
+  group('Scrolling (one finger) and the sticky top bar');
   await page.setViewport({ width: 390, height: 844, dpr: 3, mobile: true });
   await sleep(700);
   // Raw touch events rather than Input.synthesizeScrollGesture: the synthesized
   // gesture moved nothing at all in headless Chrome on Linux, while a touch
   // stream goes through the same gesture detection a real finger does.
+  // Whichever element scrolls, the page has moved by the sum of the two.
   const swipe = async () => {
     await page.eval(`${HELPERS} host.scrollTop = 0; document.scrollingElement.scrollTop = 0; return 1;`);
     const finger = (y) => [{ x: 195, y, id: 1 }];
@@ -686,16 +687,23 @@ try {
     }
     await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await sleep(500);
-    return page.eval(`${HELPERS} return { host: Math.round(host.scrollTop), doc: Math.round(document.scrollingElement.scrollTop) };`);
+    return page.eval(`${HELPERS} return {
+      scrolled: Math.round(host.scrollTop + document.scrollingElement.scrollTop),
+      bar: Math.round(rect('.topbar').top),
+    };`);
   };
-  const ownScroller = await swipe();
-  check('standalone: a one-finger swipe scrolls the panel', ownScroller.host > 100, `panel ${ownScroller.host}px, page ${ownScroller.doc}px`);
+  const scrollChecks = (where, r) => {
+    check(`${where}: a one-finger swipe scrolls the page`, r.scrolled > 100, `${r.scrolled}px`);
+    check(`${where}: the top bar stays on screen`, r.bar >= -1 && r.bar <= 16, `top bar at ${r.bar}px after ${r.scrolled}px`);
+  };
+  scrollChecks('standalone', await swipe());
 
   // Home Assistant does not size a custom panel: its parent, <ha-panel-custom>,
   // is a block with height: auto, so the panel grows to its content and the
   // document is what scrolls. Reproduce that container here. A panel that is a
-  // scroll container with nothing to scroll and also refuses to chain the scroll
-  // swallows a one-finger swipe — and only a two-finger (pinch) pan gets through.
+  // scroll container there has nothing to scroll: it swallowed a one-finger
+  // swipe while it refused to chain the scroll (1.2.0), and it is the box the
+  // sticky top bar sticks within, so the bar scrolled away with the page.
   await page.eval(`${HELPERS}
     const wrap = document.createElement('div');
     wrap.id = 'ha-like-parent';
@@ -703,8 +711,7 @@ try {
     document.body.style.overflow = 'visible';
     return 1;`);
   await sleep(500);
-  const inShell = await swipe();
-  check('inside Home Assistant: a one-finger swipe scrolls the page', inShell.doc > 100, `page ${inShell.doc}px, panel ${inShell.host}px`);
+  scrollChecks('inside Home Assistant', await swipe());
   await page.eval(`${HELPERS}
     const wrap = document.getElementById('ha-like-parent');
     wrap.before(host); wrap.remove();

@@ -8,14 +8,14 @@
  * instantaneous value over a month.
  */
 
-import { ROLE_BY_KEY } from './config.js?v=1.2.1';
-import { h, setText, setAttr, formatByKind, formatEnergy, isNum, DASH } from './utils.js?v=1.2.1';
-import { t } from './i18n.js?v=1.2.1';
-import { icon } from './icons.js?v=1.2.1';
-import { DateNav } from './date-nav.js?v=1.2.1';
-import { defaultView, periodBounds, toDateInput } from './ranges.js?v=1.2.1';
-import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.2.1';
-import { fetchPowerSeries, fetchEnergyBars, fetchSensorStats, explainEmpty } from './history.js?v=1.2.1';
+import { ROLE_BY_KEY } from './config.js?v=1.2.2';
+import { h, setText, setAttr, formatByKind, formatEnergy, isNum, DASH } from './utils.js?v=1.2.2';
+import { t } from './i18n.js?v=1.2.2';
+import { icon } from './icons.js?v=1.2.2';
+import { DateNav } from './date-nav.js?v=1.2.2';
+import { defaultView, periodBounds, toDateInput } from './ranges.js?v=1.2.2';
+import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.2.2';
+import { fetchPowerSeries, fetchEnergyBars, fetchSensorStats, explainEmpty } from './history.js?v=1.2.2';
 
 export class DetailDialog {
   constructor({ client, getConfig }) {
