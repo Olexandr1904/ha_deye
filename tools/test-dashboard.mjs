@@ -673,9 +673,18 @@ try {
   group('Touch scrolling (one finger)');
   await page.setViewport({ width: 390, height: 844, dpr: 3, mobile: true });
   await sleep(700);
+  // Raw touch events rather than Input.synthesizeScrollGesture: the synthesized
+  // gesture moved nothing at all in headless Chrome on Linux, while a touch
+  // stream goes through the same gesture detection a real finger does.
   const swipe = async () => {
     await page.eval(`${HELPERS} host.scrollTop = 0; document.scrollingElement.scrollTop = 0; return 1;`);
-    await page.send('Input.synthesizeScrollGesture', { x: 195, y: 600, yDistance: -300, gestureSourceType: 'touch', speed: 800 });
+    const finger = (y) => [{ x: 195, y, id: 1 }];
+    await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: finger(600) });
+    for (let y = 585; y >= 300; y -= 15) {
+      await page.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: finger(y) });
+      await sleep(16);
+    }
+    await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await sleep(500);
     return page.eval(`${HELPERS} return { host: Math.round(host.scrollTop), doc: Math.round(document.scrollingElement.scrollTop) };`);
   };
