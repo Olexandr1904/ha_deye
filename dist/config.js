@@ -8,10 +8,10 @@
  * better set them in configuration.yaml or through the gear icon in the UI.
  */
 
-import { RANGE_KEYS } from './ranges.js?v=1.2.1';
-import { LANGUAGES } from './i18n.js?v=1.2.1';
+import { RANGE_KEYS } from './ranges.js?v=1.2.2';
+import { LANGUAGES } from './i18n.js?v=1.2.2';
 
-export const VERSION = '1.2.1';
+export const VERSION = '1.2.2';
 
 export const STORAGE_KEY = 'deye-dashboard:user-config:v1';
 export const LEARN_KEY = 'deye-dashboard:learned:v1';

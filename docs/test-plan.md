@@ -15,6 +15,7 @@ blind spot.
 | KPI tiles and the chart legend disagreed for the same period | The two read different entities and no check ever compared them. |
 | A year with two months of data spread those months across the whole axis | Bar count was asserted as `> 0`. |
 | One finger could not scroll the page on a phone inside Home Assistant | The browser suite ran only the standalone page, where the panel is its own scroller. Home Assistant gives a panel no height, so there the document scrolls — a container the suite never had, and nothing ever swiped. |
+| The sticky top bar scrolled away inside Home Assistant | Same blind spot, found one release later: the bar sticks within its nearest scroll container, which was the panel, and nothing ever scrolled and then looked at the bar. The standalone page now scrolls its document as Home Assistant does, so the two no longer differ. |
 
 Four lessons, and they shape everything below:
 
@@ -64,9 +65,10 @@ an export. An unmeasured sensor stays unmeasured instead of counting as zero.
 is labelled derived. A past period never shows a live value. Nothing invented.
 
 **The shell.** No iframe, no own WebSocket in panel mode, no horizontal scrolling
-between 390 and 2560 px, one finger scrolls the page both standalone and inside a
-parent that gives the panel no height (as Home Assistant does), the diagram's
-links meet the node edges in all three layouts, and the console stays clean.
+between 390 and 2560 px, one finger scrolls the page and the top bar stays on
+screen both standalone and inside a parent that gives the panel no height (as
+Home Assistant does), the diagram's links meet the node edges in all three
+layouts, and the console stays clean.
 
 ## Deliberately not covered
 

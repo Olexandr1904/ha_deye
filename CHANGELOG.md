@@ -4,6 +4,15 @@ All notable changes to this project. Versions are the `VERSION` constant in
 `deye-dashboard/js/config.js`, which is also the cache-busting query the panel is
 loaded with.
 
+## 1.2.2
+
+* The top bar stays at the top of the screen again inside Home Assistant. It is
+  sticky, but it stuck within the panel, and inside Home Assistant the panel
+  does not scroll — the page does — so the bar, with the period selector on it,
+  scrolled away with everything else. The panel no longer scrolls itself
+  anywhere: the standalone page scrolls its document too, the way Home
+  Assistant does. Change `?v=1.2.1` to `?v=1.2.2` in your `panel_custom` entry.
+
 ## 1.2.1
 
 * One finger scrolls the page again on a phone. Inside Home Assistant the panel

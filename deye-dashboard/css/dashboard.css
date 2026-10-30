@@ -1,16 +1,15 @@
 /* dashboard.css — tokens, background, grid, top bar.
    Every colour goes through a CSS variable — none are hard-coded below. */
 
-/* The panel scrolls itself only where its parent gives it a height (the
-   standalone page). Home Assistant does not, so there the panel has nothing to
-   scroll and a swipe has to chain on to the document — which is why there is no
-   overscroll-behavior: contain here. With it, one finger could not scroll the
-   page on a phone. */
+/* The document scrolls, never the panel. Home Assistant gives a panel no
+   height, so a panel that scrolled itself had nothing to scroll there: it
+   swallowed one-finger swipes while it also had overscroll-behavior: contain
+   (1.2.0), and the sticky top bar, which sticks within its nearest scroll
+   container, scrolled away with the page (1.2.1). No overflow and no height
+   here; the standalone page scrolls its document the same way. */
 :host {
   display: block;
   width: 100%;
-  height: 100%;
-  overflow: auto;
 
   /* ─── surfaces ─── */
   --bg-0: #06090f;

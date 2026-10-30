@@ -11,7 +11,7 @@
  * off as measured.
  */
 
-import { isNum, clamp } from './utils.js?v=1.2.1';
+import { isNum, clamp } from './utils.js?v=1.2.2';
 
 /** Power below which a flow counts as absent (sensor noise). */
 const IDLE_KW = 0.015;

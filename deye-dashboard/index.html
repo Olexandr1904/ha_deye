@@ -8,8 +8,8 @@
   <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
   <style>
     html, body { margin: 0; height: 100%; background: #06090f; }
-    body { overflow: hidden; }
-    deye-dashboard { display: block; width: 100%; height: 100%; }
+    /* The document scrolls, as it does inside Home Assistant. */
+    deye-dashboard { display: block; width: 100%; }
     #dev-errors {
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 999;
       margin: 0; padding: 10px 14px; max-height: 40%; overflow: auto;

@@ -11,8 +11,8 @@
  * and redraw driven by a ResizeObserver.
  */
 
-import { h, s, niceTicks, monotonePath, clamp, fmtClock, fmtDayShort, fmtMonthShort, formatPower, formatEnergy, prefersReducedMotion } from './utils.js?v=1.2.1';
-import { t } from './i18n.js?v=1.2.1';
+import { h, s, niceTicks, monotonePath, clamp, fmtClock, fmtDayShort, fmtMonthShort, formatPower, formatEnergy, prefersReducedMotion } from './utils.js?v=1.2.2';
+import { t } from './i18n.js?v=1.2.2';
 
 const PAD = { top: 18, right: 14, bottom: 26, left: 46 };
 
