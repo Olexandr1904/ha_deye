@@ -43,7 +43,7 @@ where the driver looks.
 | `test-history.mjs` | 15 assertions on `js/history.js` against a stub Home Assistant, including the boundary defect that made a one-day period report two days of energy, the sum-diff baseline, and unit normalisation. |
 | `test-charts.mjs` | 28 assertions on the chart axes: a period's buckets are calendar-exact across DST, month lengths and leap years, a year always lays out twelve months whatever the data holds, and the time axis labels a month with dates rather than repeating one clock time. |
 | `test-deploy.py` | 33 assertions on the YAML `deploy.py` writes, including the case that must never regress: a re-deploy without `--entities` keeps the mapping already on the host. |
-| `test-dashboard.mjs` | 181 checks in a real browser (below). |
+| `test-dashboard.mjs` | 183 checks in a real browser (below). |
 | `cdp.mjs` | A 300-line Chrome DevTools Protocol driver: launches the browser on a private profile, emulates devices (a real viewport width and DPR, which `--window-size` cannot give), clicks, reads the shadow DOM, takes screenshots, and collects console errors, exceptions **and** window errors. Kills the process group on exit and on Ctrl-C. |
 
 | Browser group | Examples |

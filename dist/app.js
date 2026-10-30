@@ -5,21 +5,21 @@
  *   HA state_changed -> EntityManager -> EnergyModel -> PowerFlow -> DashboardRenderer
  */
 
-import { mergeConfig, loadUserConfig, saveUserConfig, VERSION, ROLE_BY_KEY } from './config.js?v=1.2.0';
-import { HAClient, STATUS } from './ha-client.js?v=1.2.0';
-import { DemoClient } from './demo.js?v=1.2.0';
-import { EntityManager } from './entity-manager.js?v=1.2.0';
-import { EnergyModel } from './energy-model.js?v=1.2.0';
-import { computeFlow } from './power-flow.js?v=1.2.0';
-import { DashboardRenderer } from './renderer.js?v=1.2.0';
-import { SettingsUI } from './settings-ui.js?v=1.2.0';
-import { DetailDialog } from './detail-dialog.js?v=1.2.0';
-import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.2.0';
-import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js?v=1.2.0';
-import { autoDetect } from './discovery.js?v=1.2.0';
-import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js?v=1.2.0';
-import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js?v=1.2.0';
-import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js?v=1.2.0';
+import { mergeConfig, loadUserConfig, saveUserConfig, VERSION, ROLE_BY_KEY } from './config.js?v=1.2.1';
+import { HAClient, STATUS } from './ha-client.js?v=1.2.1';
+import { DemoClient } from './demo.js?v=1.2.1';
+import { EntityManager } from './entity-manager.js?v=1.2.1';
+import { EnergyModel } from './energy-model.js?v=1.2.1';
+import { computeFlow } from './power-flow.js?v=1.2.1';
+import { DashboardRenderer } from './renderer.js?v=1.2.1';
+import { SettingsUI } from './settings-ui.js?v=1.2.1';
+import { DetailDialog } from './detail-dialog.js?v=1.2.1';
+import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.2.1';
+import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js?v=1.2.1';
+import { autoDetect } from './discovery.js?v=1.2.1';
+import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js?v=1.2.1';
+import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js?v=1.2.1';
+import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js?v=1.2.1';
 
 const KEY_ROLES = ['pvPower', 'batterySoc', 'batteryPower', 'gridPower', 'loadPower'];
 const CHART_REFRESH_MS = 120000;
