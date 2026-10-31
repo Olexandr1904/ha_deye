@@ -53,6 +53,11 @@ export function computeFlow(state) {
   if (load !== null) {
     let restPv = pv || 0;
     let restGen = gen || 0;
+    // The grid is drawn down like every other source, never used as the
+    // residual: a shortfall nothing measured explains (an unmapped generator)
+    // stays unattributed — the balance notice reports it — instead of being
+    // credited to a grid that reads 0 W.
+    let restGrid = grid !== null ? Math.max(0, grid) : 0;
     let uncovered = load;
 
     if (pv !== null) {
@@ -69,13 +74,16 @@ export function computeFlow(state) {
       alloc.batteryToLoad = Math.min(batDischarge, uncovered);
       uncovered -= alloc.batteryToLoad;
     }
-    if (grid !== null) alloc.gridToLoad = Math.max(0, uncovered);
+    if (grid !== null) {
+      alloc.gridToLoad = Math.min(restGrid, Math.max(0, uncovered));
+      restGrid -= alloc.gridToLoad;
+    }
 
     if (batCharge !== null) {
       let toCharge = batCharge;
       if (pv !== null) { alloc.pvToBattery = Math.min(restPv, toCharge); restPv -= alloc.pvToBattery; toCharge -= alloc.pvToBattery; }
       if (gen !== null) { alloc.generatorToBattery = Math.min(restGen, toCharge); restGen -= alloc.generatorToBattery; toCharge -= alloc.generatorToBattery; }
-      if (grid !== null) alloc.gridToBattery = Math.max(0, toCharge);
+      if (grid !== null) alloc.gridToBattery = Math.min(restGrid, Math.max(0, toCharge));
     }
     if (gridExport !== null) {
       // Same cascade as the load and the charge passes. Without a generator
