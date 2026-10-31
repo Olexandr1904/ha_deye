@@ -190,10 +190,13 @@ try {
       `dash ${b.dash} under a ${b.width} stroke, ${b.cap} caps`);
   }
 
+  // On by default: the diagram's flow is its point, so the system's
+  // reduce-motion setting stops it only when animation is set to auto.
   await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   await sleep(300);
-  const reduced = await page.eval(`${HELPERS} return getComputedStyle(q('.link-solar .link-beads')).animationDuration;`);
-  check('prefers-reduced-motion disables the animation', parseFloat(reduced) < 0.01, `duration ${reduced}`);
+  const reduced = await page.eval(`${HELPERS} return { setting: app.config.animations, dur: getComputedStyle(q('.link-solar .link-beads')).animationDuration };`);
+  check('by default the beads run even under reduce-motion', reduced.setting === 'on' && parseFloat(reduced.dur) > 0.4,
+    `animations=${reduced.setting}, duration ${reduced.dur}`);
   await page.send('Emulation.setEmulatedMedia', { features: [] });
 
   /* ─────────────── 4. chart periods ─────────────── */

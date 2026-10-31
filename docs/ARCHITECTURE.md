@@ -189,11 +189,12 @@ changes shape at most once a day.
 
 ## Flow animation
 
-The particles move along each link in the direction energy actually flows, at a
-speed derived from the power, and stop when a flow is idle. The setting under the
-gear icon has three states: `auto` respects the operating system's "reduce
-motion" preference, `on` animates regardless, `off` never animates. If the
-particles ever look frozen, that system preference is the first thing to check.
+The particles — round beads — move along each link in the direction energy
+actually flows, at a speed derived from the power, and stop when a flow is idle.
+The setting under the gear icon has three states: `on` (the default) animates
+regardless, `auto` respects the operating system's "reduce motion" preference,
+`off` never animates. A browser that saved its settings before 1.2.5 keeps the
+`auto` it stored then; if the particles look frozen there, choose `on`.
 
 ## Configuration through YAML (optional)
 

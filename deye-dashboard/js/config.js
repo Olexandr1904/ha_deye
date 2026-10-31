@@ -256,10 +256,11 @@ export const DEFAULT_CONFIG = {
     pv: 'normal',
   },
   /**
-   * Flow animation: 'auto' respects the system "reduce motion" preference,
-   * 'on' animates regardless, 'off' never animates.
+   * Flow animation: 'on' animates regardless (the default — the flow is the
+   * point of the diagram), 'auto' respects the system "reduce motion"
+   * preference, 'off' never animates.
    */
-  animations: 'auto',
+  animations: 'on',
   /** Phases card: auto (when data exists) | always | never */
   showPhases: 'auto',
   /** Chart: default period — day | week | month | year | custom. */
@@ -291,7 +292,7 @@ export function mergeConfig(...layers) {
   // the rest of the code: these values arrive from localStorage and from
   // hand-written YAML, so they cannot be assumed to be one of ours.
   const oneOf = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
-  out.animations = oneOf(out.animations, ['auto', 'on', 'off'], 'auto');
+  out.animations = oneOf(out.animations, ['auto', 'on', 'off'], DEFAULT_CONFIG.animations);
   out.showPhases = oneOf(out.showPhases, ['auto', 'always', 'never'], 'auto');
   out.chart.defaultRange = oneOf(out.chart.defaultRange, RANGE_KEYS, 'day');
   out.language = oneOf(out.language, ['auto', ...LANGUAGES.map((l) => l.code)], DEFAULT_CONFIG.language);

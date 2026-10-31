@@ -23,7 +23,9 @@ eq('animations: true becomes auto', mergeConfig(null, { animations: true }).anim
 eq('animations: false becomes off', mergeConfig(null, { animations: false }).animations, 'off');
 eq('animations: auto survives', mergeConfig(null, { animations: 'auto' }).animations, 'auto');
 eq('animations: on survives', mergeConfig(null, { animations: 'on' }).animations, 'on');
-eq('a nonsense value falls back', mergeConfig(null, { animations: 'sometimes' }).animations, 'auto');
+eq('a nonsense value falls back to the default', mergeConfig(null, { animations: 'sometimes' }).animations, 'on');
+// The flow is the point of the diagram: it runs unless someone turns it down.
+eq('animation is on by default', DEFAULT_CONFIG.animations, 'on');
 eq('an absent value takes the default', mergeConfig(null, {}).animations, DEFAULT_CONFIG.animations);
 
 /* ── range keys were renamed when periods became calendar-exact ── */
