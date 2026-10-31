@@ -29,7 +29,8 @@ Deye Dashboard  (panel_custom, vanilla JS, no iframe)
 | **Live flow** | Particles move in the direction energy actually flows, at a speed derived from the power, and stop when a link is idle. Direction comes from measured values and automatic sensor-polarity detection — not from guesswork. |
 | **Any period** | Day / week / month / year or a custom interval. The choice governs the whole page: the diagram, the cards and every KPI tile. |
 | **Honest history** | A period strictly in the past hides every live card instead of mixing epochs, and says which of three reasons an empty period has. |
-| **Generator** | If the inverter reports one, it becomes a fifth spoke, a term in the power balance, a share of the load coverage, a KPI tile and a card — and it stays out of sight when there is nothing to show. |
+| **Time on battery** | How long the battery lasts at the house's consumption, down to the inverter's cut-off — and, with a Solcast forecast, whether it lasts until the sun returns or when it runs out. |
+| **Generator** | If the inverter reports one, it becomes a fifth spoke, a term in the power balance, a share of the load coverage, a KPI tile and a card — on the diagram only while it runs, on the tile for the day's energy. |
 | **Drill-down** | Click any value backed by an entity: its own chart, its own date navigation, min / avg / max, and a link into Home Assistant's history. |
 | **Any inverter naming** | Entities are detected by unit, device class and keywords, then pinned in the UI or in YAML. Nothing is hardcoded — no entity ids, no units. |
 | **Two languages** | English and Ukrainian, switchable from the header. |
@@ -74,7 +75,7 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /hacsfiles/ha_deye/ha_deye.js?v=1.2.5
+    module_url: /hacsfiles/ha_deye/ha_deye.js?v=1.3.0
     embed_iframe: false           # no iframe: the panel lives inside HA
     require_admin: false
 ```
@@ -83,7 +84,7 @@ panel_custom:
 
 Copy the contents of [`dist/`](dist/) into `/config/www/deye-dashboard/`, then use
 the same `panel_custom` block with
-`module_url: /local/deye-dashboard/ha_deye.js?v=1.2.5`.
+`module_url: /local/deye-dashboard/ha_deye.js?v=1.3.0`.
 
 There is also `tools/deploy.py`, which copies the files over SMB (the Samba share
 add-on), writes the panel package, and stamps every import with the version so a
@@ -105,7 +106,7 @@ Install the Deye Dashboard panel in my Home Assistant.
        sidebar_title: Deye
        sidebar_icon: mdi:solar-power-variant
        url_path: deye-dashboard
-       module_url: /local/deye-dashboard/ha_deye.js?v=1.2.5
+       module_url: /local/deye-dashboard/ha_deye.js?v=1.3.0
        embed_iframe: false
        require_admin: false
 
@@ -170,9 +171,9 @@ evening. Every screenshot above is that demo. `?hour=20` pins the time of day.
 ./tools/run-tests.sh
 ```
 
-233 unit assertions (calendar arithmetic, energy distribution, history windowing,
+284 unit assertions (calendar arithmetic, energy distribution, history windowing,
 chart axes, stored-config migration, the deployment YAML — no browser, under a
-second) and then 196 checks in a real headless Chrome over the DevTools Protocol.
+second) and then 208 checks in a real headless Chrome over the DevTools Protocol.
 No npm dependencies: Node 22+, python3 and Chrome.
 
 There is also `tools/test-in-ha.mjs` — 42 assertions inside a running Home

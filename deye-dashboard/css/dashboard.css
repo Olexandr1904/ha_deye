@@ -372,6 +372,9 @@
 .stat-row[hidden] { display: none; }
 .stat-label { color: var(--text-2); }
 .stat-value { color: var(--text-0); font-weight: 550; white-space: nowrap; }
+/* A value that is a sentence (the battery forecast) wraps instead of widening
+   the card — in Ukrainian it is longer than a phone is wide. */
+.stat-row.is-sentence .stat-value { white-space: normal; text-align: right; }
 
 /* Values that can be drilled into. Only roles with a mapped entity get the
    affordance — setInteractiveRoles() adds the class. */

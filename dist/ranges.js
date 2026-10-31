@@ -15,7 +15,7 @@
  *     happened yet.
  */
 
-import { localeTag } from './i18n.js?v=1.2.5';
+import { localeTag } from './i18n.js?v=1.3.0';
 
 export const RANGE_KEYS = ['day', 'week', 'month', 'year', 'custom'];
 

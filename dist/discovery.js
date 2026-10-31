@@ -9,13 +9,14 @@
  * It saves nothing by itself — it returns a proposal for the user to confirm.
  */
 
-import { ROLES, ROLE_BY_KEY } from './config.js?v=1.2.5';
-import { log } from './utils.js?v=1.2.5';
+import { ROLES, ROLE_BY_KEY } from './config.js?v=1.3.0';
+import { log } from './utils.js?v=1.3.0';
 
 /**
  * Measurements only. The number/input_number/select domains hold inverter SETPOINTS
  * (for example number.inverter_grid_max_export_power = 31 kW), and they must never
- * be read as current values.
+ * be read as current values — unless a role is itself a setpoint and names the
+ * domain in `domains` (the battery cut-off).
  */
 const ALLOWED_DOMAINS = new Set(['sensor', 'binary_sensor']);
 
@@ -77,7 +78,7 @@ function passesGate(kind, info) {
 /** Score one candidate for a role. Returns 0 when the candidate is unsuitable. */
 export function scoreCandidate(role, info, { prefix = null } = {}) {
   const domain = (info.entity_id || '').split('.')[0];
-  if (!ALLOWED_DOMAINS.has(domain)) return 0;
+  if (!(role.domains ? role.domains.includes(domain) : ALLOWED_DOMAINS.has(domain))) return 0;
   if (!passesGate(role.kind, info)) return 0;
 
   const objectId = (info.entity_id || '').split('.').slice(1).join('.');

@@ -29,7 +29,7 @@ is in [docs/test-plan.md](../docs/test-plan.md).
 ./tools/run-tests.sh
 ```
 
-Runs the unit tests first (233 assertions, instantly, no browser), then serves
+Runs the unit tests first (284 assertions, instantly, no browser), then serves
 `deye-dashboard/` over a static server, launches headless Chrome and runs 181
 checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`)
 and an installed Chrome or Chromium — set `CHROME=/path/to/chrome` if it is not
@@ -38,12 +38,13 @@ where the driver looks.
 | File | What it covers |
 |---|---|
 | `test-ranges.mjs` | 69 assertions on the calendar arithmetic in `js/ranges.js`: period bounds, Monday weeks, month lengths, DST, resolution choice, navigation clamping. A fixed `now` is threaded through every call, so the suite still passes next year and in any timezone. |
-| `test-config.mjs` | 36 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, that a merge never loses a pinned entity, and which roles a saved mapping has never heard of. |
+| `test-config.mjs` | 42 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, that a merge never loses a pinned entity, which roles a saved mapping has never heard of, and that auto-detection finds the battery cut-off and the Solcast forecast among their real neighbours without letting any other role read a setpoint. |
 | `test-model.mjs` | 48 assertions on `js/power-flow.js` and the counter fallback: link directions, the load-coverage cascade, export attribution (including a generator exporting while the battery charges), that an unmeasured sensor is never treated as zero, and that the grid is credited with no more than it imported. |
 | `test-history.mjs` | 19 assertions on `js/history.js` against a stub Home Assistant, including the boundary defect that made a one-day period report two days of energy, the sum-diff baseline, unit normalisation, and that a power reading holds until it changes. |
 | `test-charts.mjs` | 28 assertions on the chart axes: a period's buckets are calendar-exact across DST, month lengths and leap years, a year always lays out twelve months whatever the data holds, and the time axis labels a month with dates rather than repeating one clock time. |
+| `test-runtime.mjs` | 45 assertions on `js/battery-runtime.js` and the model's use of it, with a real install's numbers: the energy above the inverter's cut-off, time on battery at the house's consumption, the run through the solar forecast (the cut-off time to the minute, the lowest point, the capacity cap, a half-hour already under way, a forecast that ends in the dark or has a hole, a battery already at the cut-off), Solcast's `detailedForecast` parsing, the ten-minute time-weighted consumption and what happens when the load sensor drops out, and the generator's two-minute hold on the diagram. |
 | `test-deploy.py` | 33 assertions on the YAML `deploy.py` writes, including the case that must never regress: a re-deploy without `--entities` keeps the mapping already on the host. |
-| `test-dashboard.mjs` | 196 checks in a real browser (below). |
+| `test-dashboard.mjs` | 208 checks in a real browser (below). |
 | `cdp.mjs` | A 300-line Chrome DevTools Protocol driver: launches the browser on a private profile, emulates devices (a real viewport width and DPR, which `--window-size` cannot give), clicks, reads the shadow DOM, takes screenshots, and collects console errors, exceptions **and** window errors. Kills the process group on exit and on Ctrl-C. |
 
 | Browser group | Examples |
@@ -56,7 +57,7 @@ where the driver looks.
 | Selector placement | the date chip and the period list are inside the first screen at 1600, 1440 and 390 px, with no horizontal overflow |
 | Chart interaction | tooltip and crosshair, series toggle off and on |
 | Date navigation | historical mode hides every live card, KPI is recomputed from statistics, `Now` returns, a custom interval loads, the pickers refuse the future, an empty period names its reason |
-| Settings | opens from the gear, four tabs, entity autocomplete, role-match validation, YAML/JSON export |
+| Settings | opens from the gear, four tabs, entity autocomplete (setpoints offered only to the cut-off), role-match validation, YAML/JSON export |
 | Responsive | 390 / 430 / 768 / 1024 / 1440 / 1920 / 2560 — no horizontal scrolling, labels do not overlap, numbers are not clipped |
 | Extreme data | 200 kW does not break the layout, low SOC turns the battery red, `unavailable` becomes dashes and OFFLINE, every flow goes idle |
 | Connection | RECONNECTING → DISCONNECTED → ONLINE |
@@ -64,6 +65,7 @@ where the driver looks.
 | Polarity | the demo reports "+ = discharge", the dashboard flips the sign itself, the balance adds up |
 | Language | English ⇄ Ukrainian, units and the settings dialog translate, the remount keeps state |
 | Generator | the five-spoke layout, the card, the KPI, the coverage mix, the balance, and that an export is attributed to the generator rather than to a charging battery |
+| Time on battery | the card's time on battery matches the energy above the cut-off at the averaged consumption, the forecast line names a cut-off time or a lowest point and runs on the demo's pinned clock, "at the cut-off" replaces both lines at the cut-off, time to full only while charging, the Ukrainian forecast line wraps on a phone, and a stopped generator leaves the diagram but keeps its tile |
 | Sensor dialog | a stat row, a KPI tile, a diagram node, a PV string and a phase all open their own sensor; Enter and Space work; a sensor without `state_class` explains itself; Escape closes |
 | Animation setting | `auto` / `on` / `off` against an emulated `prefers-reduced-motion` |
 | Accessibility | aria-labels on icon buttons, `role="tab"` / `aria-selected`, decorative SVG hidden, buttons focusable |

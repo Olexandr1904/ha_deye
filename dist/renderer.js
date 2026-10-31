@@ -6,15 +6,15 @@
  * Nothing is ever re-rendered wholesale.
  */
 
-import { icon } from './icons.js?v=1.2.5';
+import { icon } from './icons.js?v=1.3.0';
 import {
   h, s, setText, setAttr, toggleClass, setStyleVar, formatPower, formatEnergy, formatNumber,
-  fmtClock, fmtAgo, fmtHours, isNum, clamp, DASH,
-} from './utils.js?v=1.2.5';
-import { t, getLanguage, LANGUAGES } from './i18n.js?v=1.2.5';
-import { FLOW_LAYOUTS, LINK_KEYS, pickLayout } from './flow-layout.js?v=1.2.5';
-import { DateNav } from './date-nav.js?v=1.2.5';
-import { periodLabel, usesLiveCounters } from './ranges.js?v=1.2.5';
+  fmtClock, fmtAgo, fmtHours, fmtDayShort, isNum, clamp, DASH,
+} from './utils.js?v=1.3.0';
+import { t, getLanguage, LANGUAGES } from './i18n.js?v=1.3.0';
+import { FLOW_LAYOUTS, LINK_KEYS, pickLayout } from './flow-layout.js?v=1.3.0';
+import { DateNav } from './date-nav.js?v=1.3.0';
+import { periodLabel, usesLiveCounters, sameDay, addDays } from './ranges.js?v=1.3.0';
 
 /**
  * KPI tiles. Values arrive from the app as a plain object, because the source
@@ -422,11 +422,14 @@ export class DashboardRenderer {
       ['current', t('stat.current'), 'batteryCurrent'],
       ['temperature', t('stat.temperature'), 'batteryTemperature'],
       ['soh', t('stat.health'), 'batterySoh'],
+      ['runtime', t('stat.onBattery'), null],
+      ['forecast', t('stat.withForecast'), null],
       ['eta', t('stat.timeToFull'), null],
       ['cycleToday', t('stat.chargeDischarge'), null],
     ]) {
       const row = statRow(label, role);
       r.battery.rows[key] = row;
+      if (key === 'forecast') row.node.classList.add('is-sentence');
       rowsWrap.appendChild(row.node);
     }
 
@@ -838,8 +841,16 @@ export class DashboardRenderer {
     setRow(b.rows.temperature, st.temperature, 'temperature');
     setRow(b.rows.soh, st.soh, 'percent');
 
-    const eta = st.charging ? st.timeToFull : st.discharging ? st.timeToEmpty : null;
-    setText(b.rows.eta.label, t(st.charging ? 'stat.timeToFull' : 'stat.timeToEmpty'));
+    // Time on battery at the house's consumption, down to the inverter's cut-off,
+    // and the same through the solar forecast; time to full only while charging.
+    const rt = st.runtime;
+    const r = rt ? Math.round(rt.reservePct) : 0;
+    setText(b.rows.runtime.value, !rt ? DASH : rt.atCutoff ? t('runtime.atCutoff', { r }) : t('runtime.value', { t: fmtHours(rt.hours), r }));
+    setAttr(b.rows.runtime.node, 'hidden', !rt);
+    const fc = st.forecast && !st.forecast.atCutoff ? st.forecast : null;
+    setText(b.rows.forecast.value, fc ? forecastText(fc, state.meta && state.meta.now) : DASH);
+    setAttr(b.rows.forecast.node, 'hidden', !fc);
+    const eta = st.charging ? st.timeToFull : null;
     setText(b.rows.eta.value, isNum(eta) ? fmtHours(eta) : DASH);
     setAttr(b.rows.eta.node, 'hidden', !isNum(eta));
 
@@ -965,6 +976,22 @@ export class DashboardRenderer {
 }
 
 /* ─────────────────────────── small helpers ─────────────────────────── */
+
+/**
+ * "down to 10 % tomorrow at 04:43", "lasts — lowest ≈ 28 % tomorrow at 07:00",
+ * or, when the forecast stopped while the battery was still draining,
+ * "forecast ends tomorrow at 00:00 with ≈ 31 % left".
+ */
+function forecastText(fc, nowMs) {
+  const at = new Date(fc.reachesAt !== null ? fc.reachesAt : fc.minAt);
+  const today = new Date(isNum(nowMs) ? nowMs : Date.now());
+  const time = fmtClock(at, false);
+  const when = sameDay(at, today) ? t('when.today', { time })
+    : sameDay(at, addDays(today, 1)) ? t('when.tomorrow', { time })
+      : t('when.later', { date: fmtDayShort(at), time });
+  if (fc.reachesAt !== null) return t('forecast.reaches', { r: Math.round(fc.minPct), when });
+  return t(fc.open ? 'forecast.open' : 'forecast.holds', { p: Math.round(fc.minPct), when });
+}
 
 function card(cls, opts = {}, ...children) {
   const head = opts.hideHeader ? null : h('div', { class: 'card-head' },

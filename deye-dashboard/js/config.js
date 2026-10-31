@@ -11,7 +11,7 @@
 import { RANGE_KEYS } from './ranges.js';
 import { LANGUAGES } from './i18n.js';
 
-export const VERSION = '1.2.5';
+export const VERSION = '1.3.0';
 
 export const STORAGE_KEY = 'deye-dashboard:user-config:v1';
 export const LEARN_KEY = 'deye-dashboard:learned:v1';
@@ -57,13 +57,21 @@ export const ROLES = [
   // ────────────────────────────── SOLAR ──────────────────────────────
   { key: 'pvPower', group: 'solar', label: 'PV power (total)', kind: 'power', optional: false,
     hints: { any: [['pv_?power', 9], ['solar_?power', 8], ['total_?(dc_?)?(pv|solar|input)_?power', 9], ['(pv|solar).*power', 5], ['^.*_dc_power$', 3], ['photovolt', 6]],
-             not: ['pv[1-9]', 'string_?[1-9]', 'mppt_?[1-9]', 'voltage', 'current', 'today', 'daily', 'yesterday', 'month', 'year', 'total_?energy', 'limit', 'max_', 'setting', 'apparent'] } },
+             not: ['pv[1-9]', 'string_?[1-9]', 'mppt_?[1-9]', 'voltage', 'current', 'today', 'daily', 'yesterday', 'month', 'year', 'total_?energy', 'limit', 'max_', 'setting', 'apparent', 'forecast'] } },
   { key: 'pvToday', group: 'solar', label: 'PV energy today', kind: 'energy',
     hints: { any: [['(today|daily).*(production|pv|solar|yield|generation)', 9], ['(production|pv|solar|yield|generation).*(today|daily)', 9], ['energy_?today', 4]],
-             not: ['total(?!_energy_today)', 'month', 'year', 'life', 'yesterday', 'load', 'consum', 'grid', 'import', 'export', 'sold', 'bought', 'battery', 'charge'] } },
+             not: ['total(?!_energy_today)', 'month', 'year', 'life', 'yesterday', 'load', 'consum', 'grid', 'import', 'export', 'sold', 'bought', 'battery', 'charge', 'forecast'] } },
   { key: 'pvTotal', group: 'solar', label: 'PV energy total', kind: 'energy',
     hints: { any: [['(total|lifetime|life).*(production|pv|solar|yield|generation)', 9], ['(production|pv|solar|yield).*(total|lifetime)', 9]],
-             not: ['today', 'daily', 'month', 'year', 'load', 'consum', 'grid', 'import', 'export', 'battery'] } },
+             not: ['today', 'daily', 'month', 'year', 'load', 'consum', 'grid', 'import', 'export', 'battery', 'forecast'] } },
+  // The solar forecast — Solcast's whole-day sensors: the state is the day's
+  // kWh, the attribute detailedForecast the half-hour slots (forecast: true
+  // makes EntityManager keep them). Used to say whether the battery lasts until
+  // the sun returns.
+  { key: 'pvForecastToday', group: 'solar', label: 'Solar forecast today', kind: 'energy', forecast: true,
+    hints: { any: [['forecast_?today', 10], ['forecast.*today', 6]], not: ['remaining', 'tomorrow', 'peak', 'hour', 'yesterday', 'day_?[3-7]'] } },
+  { key: 'pvForecastTomorrow', group: 'solar', label: 'Solar forecast tomorrow', kind: 'energy', forecast: true,
+    hints: { any: [['forecast_?tomorrow', 10], ['forecast.*tomorrow', 6]], not: ['remaining', 'peak', 'hour', 'day_?[3-7]'] } },
 
   { key: 'pv1Power', group: 'solar', label: 'PV1 power', kind: 'power',
     hints: { any: [['(pv|string|mppt)_?1_?.*power', 10]], not: ['voltage', 'current', 'today', 'total', 'energy'] } },
@@ -115,6 +123,12 @@ export const ROLES = [
     hints: { any: [['(^|_)battery_soh(_|$)', 11], ['soh', 9], ['state_?of_?health', 9], ['battery.*health', 8]], not: ['cell'] } },
   { key: 'batteryCapacity', group: 'battery', label: 'Battery capacity (kWh)', kind: 'energy',
     hints: { any: [['battery.*capacity', 10]], not: ['remain', 'today', 'daily', 'soc', 'percent', 'ah'] } },
+  // The state of charge below which the inverter stops discharging. A setpoint
+  // (number.*) — the one this dashboard reads, through `domains`: time on
+  // battery is counted down to it, not down to empty.
+  { key: 'batteryShutdownSoc', group: 'battery', label: 'Battery cut-off (shutdown SOC)', kind: 'percent', domains: ['number', 'sensor'],
+    hints: { any: [['battery.*shutdown.*soc', 10], ['shutdown_?soc', 8], ['discharge_?cut_?off.*soc', 8]],
+             not: ['volt', 'restart', 'low', 'grid', 'generator'] } },
   { key: 'batteryStatus', group: 'battery', label: 'Battery status (charging/discharging)', kind: 'text',
     hints: { any: [['battery.*(status|state|mode)', 9]], not: ['soc', 'soh', 'power', 'volt', 'curr', 'temp'] } },
   { key: 'batteryChargeToday', group: 'battery', label: 'Battery charged today', kind: 'energy',

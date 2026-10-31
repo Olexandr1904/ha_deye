@@ -128,7 +128,8 @@ Key roles (the dashboard is incomplete without them): `pvPower`, `batterySoc`,
 
 Everything else is optional and simply hides when the entity is missing:
 `pvToday`, `pvTotal`, `pv1…pv4 Power/Voltage/Current`,
-`batteryVoltage/Current/Temperature/Soh/Status/Capacity`,
+`batteryVoltage/Current/Temperature/Soh/Status/Capacity`, `batteryShutdownSoc`,
+`pvForecastToday`, `pvForecastTomorrow`,
 `batteryChargePower`, `batteryDischargePower`, `batteryChargeToday`, `batteryDischargeToday`,
 `gridImportPower`, `gridExportPower`, `gridImportToday`, `gridExportToday`, `gridVoltage`, `gridFrequency`,
 `loadToday`, `loadTotal`,
@@ -142,6 +143,8 @@ score by keywords, then a second pass with a bonus for a shared `entity_id`
 prefix. The domain filter only accepts `sensor` and `binary_sensor`, because
 `number.*` entities are inverter **setpoints** — reading
 `number.inverter_grid_max_export_power` as the current export would be wrong.
+The one role that is a setpoint itself, the battery cut-off, names `number` in
+its `domains`.
 
 ---
 
@@ -183,9 +186,35 @@ at power or temperature over a month.
 If the inverter reports a generator, it becomes a full energy source rather than
 a footnote: a fifth spoke in the diagram, a term in the power balance
 (`pv + generator + grid_import = load + battery_charge`), a share in the load
-coverage, a KPI tile and a card. It appears when it has power or has produced
-energy today, and because the daily counter only resets at midnight the diagram
-changes shape at most once a day.
+coverage, a KPI tile and a card. The spoke and the card are there while it runs:
+they appear at once and leave after two minutes without power, so a reading that
+hovers around zero does not rebuild the diagram on every update. The KPI tile and
+the generator's series in the charts follow the day instead — they stay while
+the generator has produced anything today.
+
+## Time on battery
+
+The battery card says how long the battery lasts at the house's present
+consumption — not at what the battery delivers this minute, which is close to
+zero whenever the sun covers the house. The consumption is averaged over the
+last ten minutes, so the figure does not halve and double with a fridge. Only
+the energy above the inverter's cut-off counts (`batteryShutdownSoc`, the
+shutdown SOC — 10 % on a typical Deye setup); without that role it counts down
+to empty and says so ("to 0 %"). At the cut-off it says "at the cut-off". When
+the load sensor drops out there is no figure, and the average starts afresh when
+it returns.
+
+With a solar forecast mapped (`pvForecastToday` / `pvForecastTomorrow`: sensors
+whose `detailedForecast` attribute holds half-hour slots, as Solcast's do), a
+second line runs the battery through the forecast: each half hour the forecast
+sun minus the same consumption, the battery never above its capacity. Either it
+reaches the cut-off ("down to 10 % tomorrow at 04:43") or it holds, and the
+lowest point says by how much ("lasts — lowest ≈ 28 % tomorrow at 07:00"). A
+forecast that ends, or has a hole, while the battery is still draining promises
+nothing past that point ("forecast ends tomorrow at 00:00 with ≈ 31 % left"), and
+one that does not cover the present gives no line at all. The generator is left
+out: when it will run is not known. Everything runs on the client's clock, which
+the demo pins with `?hour=`.
 
 ## Flow animation
 
@@ -245,10 +274,10 @@ The plan behind them, and what is deliberately not covered, is in
 ./tools/run-tests.sh
 ```
 
-One command runs everything: 233 unit assertions (period arithmetic, energy
+One command runs everything: 284 unit assertions (period arithmetic, energy
 distribution, history windowing, chart axes, stored-config migration and the
 deployment YAML — no browser,
-under a second) and then 196
+under a second) and then 208
 checks in a real Chrome, headless over the Chrome DevTools Protocol with no npm
 dependencies. Link geometry is measured in screen coordinates for all three
 diagram layouts, responsive layout is verified with real device emulation from
