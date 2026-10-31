@@ -74,7 +74,7 @@ panel_custom:
     sidebar_title: Deye
     sidebar_icon: mdi:solar-power-variant
     url_path: deye-dashboard
-    module_url: /hacsfiles/ha_deye/ha_deye.js?v=1.2.4
+    module_url: /hacsfiles/ha_deye/ha_deye.js?v=1.2.5
     embed_iframe: false           # no iframe: the panel lives inside HA
     require_admin: false
 ```
@@ -83,7 +83,7 @@ panel_custom:
 
 Copy the contents of [`dist/`](dist/) into `/config/www/deye-dashboard/`, then use
 the same `panel_custom` block with
-`module_url: /local/deye-dashboard/ha_deye.js?v=1.2.4`.
+`module_url: /local/deye-dashboard/ha_deye.js?v=1.2.5`.
 
 There is also `tools/deploy.py`, which copies the files over SMB (the Samba share
 add-on), writes the panel package, and stamps every import with the version so a
@@ -105,7 +105,7 @@ Install the Deye Dashboard panel in my Home Assistant.
        sidebar_title: Deye
        sidebar_icon: mdi:solar-power-variant
        url_path: deye-dashboard
-       module_url: /local/deye-dashboard/ha_deye.js?v=1.2.4
+       module_url: /local/deye-dashboard/ha_deye.js?v=1.2.5
        embed_iframe: false
        require_admin: false
 
@@ -170,9 +170,9 @@ evening. Every screenshot above is that demo. `?hour=20` pins the time of day.
 ./tools/run-tests.sh
 ```
 
-232 unit assertions (calendar arithmetic, energy distribution, history windowing,
+233 unit assertions (calendar arithmetic, energy distribution, history windowing,
 chart axes, stored-config migration, the deployment YAML — no browser, under a
-second) and then 192 checks in a real headless Chrome over the DevTools Protocol.
+second) and then 196 checks in a real headless Chrome over the DevTools Protocol.
 No npm dependencies: Node 22+, python3 and Chrome.
 
 There is also `tools/test-in-ha.mjs` — 42 assertions inside a running Home

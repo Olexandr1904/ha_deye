@@ -6,11 +6,11 @@
  * configuration.yaml so it no longer depends on this browser's localStorage.
  */
 
-import { ROLES, GROUPS, ROLE_BY_KEY, VERSION, DEFAULT_CONFIG } from './config.js?v=1.2.4';
-import { autoDetect, candidatesFor, entityInfo, scoreCandidate } from './discovery.js?v=1.2.4';
-import { h, setText, setAttr, toggleClass, copyToClipboard, DASH, formatByKind, fmtClock } from './utils.js?v=1.2.4';
-import { t, LANGUAGES } from './i18n.js?v=1.2.4';
-import { icon } from './icons.js?v=1.2.4';
+import { ROLES, GROUPS, ROLE_BY_KEY, VERSION, DEFAULT_CONFIG } from './config.js?v=1.2.5';
+import { autoDetect, candidatesFor, entityInfo, scoreCandidate } from './discovery.js?v=1.2.5';
+import { h, setText, setAttr, toggleClass, copyToClipboard, DASH, formatByKind, fmtClock } from './utils.js?v=1.2.5';
+import { t, LANGUAGES } from './i18n.js?v=1.2.5';
+import { icon } from './icons.js?v=1.2.5';
 
 const DOMAINS = ['sensor.', 'binary_sensor.'];
 

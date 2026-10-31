@@ -4,6 +4,22 @@ All notable changes to this project. Versions are the `VERSION` constant in
 `deye-dashboard/js/config.js`, which is also the cache-busting query the panel is
 loaded with.
 
+## 1.2.5
+
+* The beads on the diagram move again, in the direction the energy flows. The
+  animation ended on a unitless offset, which the browser does not interpolate
+  from the 0px it starts at: the offset jumped by exactly one pattern period
+  every half cycle, so every bead stood still while the animation was
+  nominally running. Solar and the generator now run into the inverter; the
+  battery, the grid and the house out of it, or in when they feed it.
+* The beads are round. Each was a short dash with round caps — a capsule, which
+  read as an oval; it is now a dot as wide as the line.
+* Flow animation is on by default. `auto`, which stops it whenever the system
+  asks for reduced motion, is still a choice under Options. A browser that saved
+  its settings earlier keeps the `auto` it stored; choose `always animate` there
+  once.
+* Change `?v=1.2.4` to `?v=1.2.5` in your `panel_custom` entry.
+
 ## 1.2.4
 
 * The power chart no longer draws ramps that never happened. Home Assistant

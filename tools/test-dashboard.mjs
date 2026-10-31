@@ -146,10 +146,57 @@ try {
   check('intensity drives the speed', parseFloat(anim.solar.dur) < parseFloat(anim.load.dur),
     `solar ${anim.solar.dur} (7.8 kW) vs load ${anim.load.dur}`);
 
+  // Running is not moving. The keyframe took a unitless period, which Chrome
+  // would not interpolate from 0px: the offset jumped by exactly one pattern
+  // period every half cycle, so the beads stood still while every check above
+  // passed. Seek the animation and read the offset itself. Each path runs from
+  // its node to the inverter, so a falling offset carries the beads inwards.
+  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  await sleep(300);
+  const travel = await page.eval(`${HELPERS}
+    const along = (key, nodeSel) => {
+      const path = q('.link-' + key + ' .link-beads');
+      const a = path.getAnimations()[0];
+      if (!a) return { offsets: [], startAtNode: null };
+      a.pause();
+      const dur = a.effect.getComputedTiming().duration;
+      const offsets = [0.25, 0.5, 0.75].map((f) => {
+        a.currentTime = f * dur;
+        return +parseFloat(getComputedStyle(path).strokeDashoffset.replace(/[^-0-9.]/g, '')).toFixed(2);
+      });
+      a.play();
+      const [start] = endpoints(path);
+      const node = rect(nodeSel), hub = rect('.node-inverter');
+      return { offsets, startAtNode: Math.hypot(start.x - node.cx, start.y - node.cy) < Math.hypot(start.x - hub.cx, start.y - hub.cy) };
+    };
+    return { solar: along('solar', '.node-solar'), load: along('load', '.node-house') };`);
+  const falls = (v) => v.length === 3 && v[0] > v[1] && v[1] > v[2];
+  const rises = (v) => v.length === 3 && v[0] < v[1] && v[1] < v[2];
+  check('solar beads travel toward the inverter', travel.solar.startAtNode && falls(travel.solar.offsets),
+    `path starts at the node: ${travel.solar.startAtNode}, offset at 25/50/75 %: ${travel.solar.offsets.join(' / ')}`);
+  check('house beads travel from the inverter to the house', travel.load.startAtNode && rises(travel.load.offsets),
+    `path starts at the node: ${travel.load.startAtNode}, offset at 25/50/75 %: ${travel.load.offsets.join(' / ')}`);
+
+  // A bead is a zero-length dash with round caps — a circle as wide as the
+  // stroke. A dash 1.3 long under a 4.6 stroke drew a capsule, an oval.
+  const beads = await page.eval(`${HELPERS}
+    const shape = () => { const cs = getComputedStyle(q('.link-solar .link-beads'));
+      return { dash: parseFloat(cs.strokeDasharray), width: parseFloat(cs.strokeWidth), cap: cs.strokeLinecap }; };
+    const stage = q('.flow-stage'); const was = stage.dataset.layout;
+    const wide = shape(); stage.dataset.layout = 'narrow'; const narrow = shape(); stage.dataset.layout = was;
+    return { wide, narrow };`);
+  for (const [layout, b] of Object.entries(beads)) {
+    check(`${layout} layout: the beads are circles`, b.cap === 'round' && b.dash <= 0.05 * b.width,
+      `dash ${b.dash} under a ${b.width} stroke, ${b.cap} caps`);
+  }
+
+  // On by default: the diagram's flow is its point, so the system's
+  // reduce-motion setting stops it only when animation is set to auto.
   await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   await sleep(300);
-  const reduced = await page.eval(`${HELPERS} return getComputedStyle(q('.link-solar .link-beads')).animationDuration;`);
-  check('prefers-reduced-motion disables the animation', parseFloat(reduced) < 0.01, `duration ${reduced}`);
+  const reduced = await page.eval(`${HELPERS} return { setting: app.config.animations, dur: getComputedStyle(q('.link-solar .link-beads')).animationDuration };`);
+  check('by default the beads run even under reduce-motion', reduced.setting === 'on' && parseFloat(reduced.dur) > 0.4,
+    `animations=${reduced.setting}, duration ${reduced.dur}`);
   await page.send('Emulation.setEmulatedMedia', { features: [] });
 
   /* ─────────────── 4. chart periods ─────────────── */

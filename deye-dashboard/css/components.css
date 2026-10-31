@@ -9,10 +9,12 @@
   width: min(100%, calc(var(--flow-max-h, 62vh) * var(--flow-ratio, 1.4286)));
   aspect-ratio: var(--flow-aspect, 1000 / 700);
   margin: 0 auto;
-  --bead-dash: 1.3 17;
+  /* A near-zero dash with round caps is a circle as wide as the stroke; a
+     longer dash drew a capsule. The period (dash + gap) sets the spacing. */
+  --bead-dash: .01 18.29;
   --bead-period: 18.3;
 }
-.flow-stage[data-layout="narrow"] { --bead-dash: 1.1 13; --bead-period: 14.1; }
+.flow-stage[data-layout="narrow"] { --bead-dash: .01 14.09; --bead-period: 14.1; }
 
 .flow-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 
@@ -53,7 +55,10 @@
   animation: bead-run var(--dur, 1.4s) linear infinite;
 }
 .flow-link[data-dir="fromHub"] .link-beads { animation-direction: reverse; }
-@keyframes bead-run { to { stroke-dashoffset: calc(-1 * var(--bead-period)); } }
+/* -1px, not -1: the period is unitless, and a unitless end value is not
+   interpolated from the 0px start — the offset jumped by exactly one pattern
+   period every half cycle and the beads stood still. */
+@keyframes bead-run { to { stroke-dashoffset: calc(-1px * var(--bead-period)); } }
 
 /* ─── nodes ─── */
 

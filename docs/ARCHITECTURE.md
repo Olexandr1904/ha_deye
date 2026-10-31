@@ -189,11 +189,12 @@ changes shape at most once a day.
 
 ## Flow animation
 
-The particles move along each link in the direction energy actually flows, at a
-speed derived from the power, and stop when a flow is idle. The setting under the
-gear icon has three states: `auto` respects the operating system's "reduce
-motion" preference, `on` animates regardless, `off` never animates. If the
-particles ever look frozen, that system preference is the first thing to check.
+The particles — round beads — move along each link in the direction energy
+actually flows, at a speed derived from the power, and stop when a flow is idle.
+The setting under the gear icon has three states: `on` (the default) animates
+regardless, `auto` respects the operating system's "reduce motion" preference,
+`off` never animates. A browser that saved its settings before 1.2.5 keeps the
+`auto` it stored then; if the particles look frozen there, choose `on`.
 
 ## Configuration through YAML (optional)
 
@@ -244,10 +245,10 @@ The plan behind them, and what is deliberately not covered, is in
 ./tools/run-tests.sh
 ```
 
-One command runs everything: 232 unit assertions (period arithmetic, energy
+One command runs everything: 233 unit assertions (period arithmetic, energy
 distribution, history windowing, chart axes, stored-config migration and the
 deployment YAML — no browser,
-under a second) and then 192
+under a second) and then 196
 checks in a real Chrome, headless over the Chrome DevTools Protocol with no npm
 dependencies. Link geometry is measured in screen coordinates for all three
 diagram layouts, responsive layout is verified with real device emulation from

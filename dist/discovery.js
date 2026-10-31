@@ -9,8 +9,8 @@
  * It saves nothing by itself — it returns a proposal for the user to confirm.
  */
 
-import { ROLES, ROLE_BY_KEY } from './config.js?v=1.2.4';
-import { log } from './utils.js?v=1.2.4';
+import { ROLES, ROLE_BY_KEY } from './config.js?v=1.2.5';
+import { log } from './utils.js?v=1.2.5';
 
 /**
  * Measurements only. The number/input_number/select domains hold inverter SETPOINTS

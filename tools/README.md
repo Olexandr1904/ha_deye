@@ -29,7 +29,7 @@ is in [docs/test-plan.md](../docs/test-plan.md).
 ./tools/run-tests.sh
 ```
 
-Runs the unit tests first (232 assertions, instantly, no browser), then serves
+Runs the unit tests first (233 assertions, instantly, no browser), then serves
 `deye-dashboard/` over a static server, launches headless Chrome and runs 181
 checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`)
 and an installed Chrome or Chromium — set `CHROME=/path/to/chrome` if it is not
@@ -38,19 +38,19 @@ where the driver looks.
 | File | What it covers |
 |---|---|
 | `test-ranges.mjs` | 69 assertions on the calendar arithmetic in `js/ranges.js`: period bounds, Monday weeks, month lengths, DST, resolution choice, navigation clamping. A fixed `now` is threaded through every call, so the suite still passes next year and in any timezone. |
-| `test-config.mjs` | 35 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, that a merge never loses a pinned entity, and which roles a saved mapping has never heard of. |
+| `test-config.mjs` | 36 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, that a merge never loses a pinned entity, and which roles a saved mapping has never heard of. |
 | `test-model.mjs` | 48 assertions on `js/power-flow.js` and the counter fallback: link directions, the load-coverage cascade, export attribution (including a generator exporting while the battery charges), that an unmeasured sensor is never treated as zero, and that the grid is credited with no more than it imported. |
 | `test-history.mjs` | 19 assertions on `js/history.js` against a stub Home Assistant, including the boundary defect that made a one-day period report two days of energy, the sum-diff baseline, unit normalisation, and that a power reading holds until it changes. |
 | `test-charts.mjs` | 28 assertions on the chart axes: a period's buckets are calendar-exact across DST, month lengths and leap years, a year always lays out twelve months whatever the data holds, and the time axis labels a month with dates rather than repeating one clock time. |
 | `test-deploy.py` | 33 assertions on the YAML `deploy.py` writes, including the case that must never regress: a re-deploy without `--entities` keeps the mapping already on the host. |
-| `test-dashboard.mjs` | 192 checks in a real browser (below). |
+| `test-dashboard.mjs` | 196 checks in a real browser (below). |
 | `cdp.mjs` | A 300-line Chrome DevTools Protocol driver: launches the browser on a private profile, emulates devices (a real viewport width and DPR, which `--window-size` cannot give), clicks, reads the shadow DOM, takes screenshots, and collects console errors, exceptions **and** window errors. Kills the process group on exit and on Ctrl-C. |
 
 | Browser group | Examples |
 |---|---|
 | Boot | no exceptions or `console.error`, no 4xx, every card and node present, the first paint agrees with the entity state, an idle generator is nowhere on screen |
 | Geometry | SVG link endpoints line up with the node edges, measured in screen coordinates, for `wide`, `wideGen` and `narrowGen` |
-| Animation | active flows animate, flows out of the inverter run in reverse, speed follows power, idle flows stop |
+| Animation | active flows animate by default, the beads are round and actually travel — into the inverter for solar, out of it for the house — speed follows power, idle flows stop |
 | Chart periods | Day draws lines, Week/Month/Year draw bars, the legend shows period totals, forward navigation stops at today |
 | Period consistency | for week, month and year: every KPI tile equals the chart legend for the same quantity, the legend totals the bars actually drawn, no bucket lies outside the period, bars are one per bucket per series, self-sufficiency follows from the two tiles it is derived from, and returning to a period reproduces its numbers |
 | Selector placement | the date chip and the period list are inside the first screen at 1600, 1440 and 390 px, with no horizontal overflow |

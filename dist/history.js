@@ -11,8 +11,8 @@
  * never on a timer.
  */
 
-import { normalizeValue, log, warn, downsample } from './utils.js?v=1.2.4';
-import { t } from './i18n.js?v=1.2.4';
+import { normalizeValue, log, warn, downsample } from './utils.js?v=1.2.5';
+import { t } from './i18n.js?v=1.2.5';
 
 const cache = new Map();
 const TTL_MS = 60000;
