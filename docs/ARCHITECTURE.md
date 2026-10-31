@@ -245,10 +245,10 @@ The plan behind them, and what is deliberately not covered, is in
 ./tools/run-tests.sh
 ```
 
-One command runs everything: 232 unit assertions (period arithmetic, energy
+One command runs everything: 233 unit assertions (period arithmetic, energy
 distribution, history windowing, chart axes, stored-config migration and the
 deployment YAML — no browser,
-under a second) and then 192
+under a second) and then 196
 checks in a real Chrome, headless over the Chrome DevTools Protocol with no npm
 dependencies. Link geometry is measured in screen coordinates for all three
 diagram layouts, responsive layout is verified with real device emulation from

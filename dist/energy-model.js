@@ -11,9 +11,9 @@
  *   grid.power     > 0  — import   (energy comes FROM the grid)
  */
 
-import { LEARN_KEY } from './config.js?v=1.2.4';
-import { isNum, log, clamp } from './utils.js?v=1.2.4';
-import { num } from './entity-manager.js?v=1.2.4';
+import { LEARN_KEY } from './config.js?v=1.2.5';
+import { isNum, log, clamp } from './utils.js?v=1.2.5';
+import { num } from './entity-manager.js?v=1.2.5';
 
 const OFFLINE_WORDS = /(off|standby|stand_by|sleep|shutdown|stop|idle|disconnect|waiting)/i;
 const FAULT_WORDS = /(fault|error|alarm|fail)/i;

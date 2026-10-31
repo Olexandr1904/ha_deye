@@ -12,13 +12,13 @@
  * title, a clock, a connection state and two icon buttons — on a phone as well.
  */
 
-import { h, setText, setAttr, toggleClass } from './utils.js?v=1.2.4';
-import { t, localeTag } from './i18n.js?v=1.2.4';
-import { icon } from './icons.js?v=1.2.4';
+import { h, setText, setAttr, toggleClass } from './utils.js?v=1.2.5';
+import { t, localeTag } from './i18n.js?v=1.2.5';
+import { icon } from './icons.js?v=1.2.5';
 import {
   RANGE_KEYS, periodLabel, shiftPeriod, canGoForward, withRange,
   toDateInput, fromDateInput, startOfDay, addMonths, defaultView, isHistorical,
-} from './ranges.js?v=1.2.4';
+} from './ranges.js?v=1.2.5';
 
 /** A short month name in the interface language. */
 function monthShort(date) {
