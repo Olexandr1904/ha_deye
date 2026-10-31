@@ -95,6 +95,8 @@ class SignLearner {
 
 /* ─────────────────────────── the model ─────────────────────────── */
 
+/** How long a generator that stopped stays on the diagram (see build()). */
+const GEN_HOLD_MS = 2 * 60000;
 
 export class EnergyModel {
   constructor(config) {
@@ -111,6 +113,7 @@ export class EnergyModel {
     // The house's consumption over the last ten minutes: time on battery taken
     // from the instantaneous reading would halve and double with the fridge.
     this._loadMean = new RollingMean(10 * 60000);
+    this._genLastRunning = null;
   }
 
   setConfig(config) {
@@ -185,8 +188,15 @@ export class EnergyModel {
     /* ── Generator ── */
     const generatorPower = g('generatorPower');
     const generatorToday = g('generatorToday');
-    const generatorRelevant = (isNum(generatorPower) && generatorPower > 0.015)
-      || (isNum(generatorToday) && generatorToday > 0.01);
+    // On the diagram while it runs. It leaves only after two minutes of nothing,
+    // so a reading hovering around the threshold does not rebuild the diagram on
+    // every update. "Present" is what the KPI tile and the charts follow: it
+    // ran, or produced something, today.
+    const generatorRunning = isNum(generatorPower) && generatorPower > 0.015;
+    if (generatorRunning) this._genLastRunning = now;
+    const generatorRelevant = generatorRunning
+      || (this._genLastRunning !== null && now - this._genLastRunning < GEN_HOLD_MS);
+    const generatorPresent = generatorRelevant || (isNum(generatorToday) && generatorToday > 0.01);
 
     /* ── Load ── */
     // 'inverted' is for sensors that report consumption as a negative number.
@@ -281,11 +291,10 @@ export class EnergyModel {
         total: g('generatorTotal'),
         voltage: g('generatorVoltage'),
         status: txt('generatorStatus'),
-        running: isNum(generatorPower) && generatorPower > 0.015,
-        // "Relevant" drives the diagram and the card: once the generator has run
-        // today the daily counter keeps it visible until midnight, so the layout
-        // changes shape at most once a day.
+        running: generatorRunning,
+        // "Relevant" drives the diagram and the card, "present" the tile and the charts.
         relevant: generatorRelevant,
+        present: generatorPresent,
       },
       inverter: {
         power: inverterPower,

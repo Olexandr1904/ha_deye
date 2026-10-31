@@ -227,7 +227,8 @@ export class DeyeDashboard {
       consumption: live(st.load.today, 'consumption'),
       gridImport: live(st.grid.todayImport, 'gridImport'),
       gridExport: live(st.grid.todayExport, 'gridExport'),
-      generator: st.generator.relevant ? live(st.generator.today, 'generator') : null,
+      // The tile is the day's energy: it stays after the generator stops.
+      generator: st.generator.present ? live(st.generator.today, 'generator') : null,
       batteryCharged: live(st.battery.chargeToday, 'batteryCharged'),
       batteryUsed: live(st.battery.dischargeToday, 'batteryUsed'),
       selfSufficiency: this.flow.selfSufficiency,
@@ -508,7 +509,7 @@ export class DeyeDashboard {
       this._chartBucket = null;
     }
     const ent = this.config.entities;
-    const withGen = !!(this.state && this.state.generator && this.state.generator.relevant);
+    const withGen = !!(this.state && this.state.generator && this.state.generator.present);
     const defs = [
       [ent.pvPower, 'pv', t('src.solar'), 'var(--solar-color)', { area: true, width: 2.2 }],
       [withGen ? ent.generatorPower : null, 'generator', t('src.generator'), 'var(--generator-color)', {}],
@@ -557,7 +558,7 @@ export class DeyeDashboard {
     this.chart.setRange(bounds.from, bounds.to);
     this.chart.setEmptyText(t('chart.noData'));
 
-    const withGen = !!(this.state && this.state.generator && this.state.generator.relevant);
+    const withGen = !!(this.state && this.state.generator && this.state.generator.present);
     const defs = [
       ['solar', 'pv', t('src.solar'), 'var(--solar-color)'],
       [withGen ? 'generator' : null, 'generator', t('src.generator'), 'var(--generator-color)'],

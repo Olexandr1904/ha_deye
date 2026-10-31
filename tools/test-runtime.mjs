@@ -126,7 +126,7 @@ eq('readings at one instant replace each other instead of piling up', pinned.sam
 const single = new RollingMean(10 * MIN); single.push(0, 0.42);
 near('one reading is its own average', single.mean(0), 0.42, 1e-9);
 
-/* ── the model: time on battery, through build() ── */
+/* ── the model: time on battery and the generator, through build() ── */
 const model = new EnergyModel(mergeConfig(null, {}));
 const v = (o) => Object.fromEntries(Object.entries(o).map(([k, value]) => [k, { value }]));
 const base = { batterySoc: 99, batteryCapacity: CAP, batteryShutdownSoc: RESERVE, loadPower: LOAD, pvPower: 0, batteryPower: -0.5, gridPower: 0 };
@@ -141,6 +141,13 @@ st = model.build(v({ ...base, loadPower: 0.3 }), { now: at(31, 22, 3) });
 near('a settings change starts the average afresh', st.battery.runtime && st.battery.runtime.loadKw, 0.3, 1e-9);
 st = model.build(v({ ...base, batterySoc: 10 }), { now: at(31, 22, 4) });
 eq('at the cut-off the card says so', st.battery.runtime && st.battery.runtime.atCutoff, true);
+const gen = new EnergyModel(mergeConfig(null, {}));
+const g = (power, today, now) => gen.build(v({ ...base, generatorPower: power, generatorToday: today }), { now }).generator;
+eq('a running generator is on the diagram', g(4.5, 1, at(31, 19)).relevant, true);
+eq('a dip to nothing does not take it off at once', g(0.01, 1, at(31, 19, 1)).relevant, true);
+eq('two minutes of nothing does', g(0, 1, at(31, 19, 3.5)).relevant, false);
+eq("but the day's energy keeps it present for the tile and the charts", g(0, 1, at(31, 19, 4)).present, true);
+eq('a generator that never ran today is not present', new EnergyModel(mergeConfig(null, {})).build(v({ ...base, generatorPower: 0, generatorToday: 0 }), { now: at(31, 12) }).generator.present, false);
 
 if (failures.length) {
   console.log(`battery-runtime.js: ${failures.length} of ${pass + failures.length} checks FAILED\n`);

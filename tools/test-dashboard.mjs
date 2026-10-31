@@ -1155,10 +1155,10 @@ try {
   await poll(page, `!!host.app && host.app._readyDone`, 8000);
   await sleep(1500);
 
-  /* ─────────────── 13b. time on battery ─────────────── */
-  group('Time on battery and the solar forecast');
-  // 22:00: the sun is down and the battery carries the house. The demo
-  // inverter cuts the battery off at 10 %.
+  /* ─────────────── 13b. time on battery, and a generator that stopped ─────────────── */
+  group('Time on battery and the solar forecast; the generator after it stopped');
+  // 22:00: the demo generator ran 19:00-21:00 and is off, the sun is down, the
+  // battery carries the house. The demo inverter cuts the battery off at 10 %.
   await page.goto(`${BASE}?demo=1&hour=22`);
   await poll(page, `!!host.app && host.app._readyDone`, 8000);
   await sleep(1500);
@@ -1193,6 +1193,10 @@ try {
       reservePct: b.runtime.reservePct, loadKw: b.runtime.loadKw, slots: mod.mergeSlots(v.pvForecastToday.forecast, v.pvForecastTomorrow.forecast) });
     return { got: JSON.stringify(b.forecast), expected: JSON.stringify(expected), pinned: new Date(app.client.now()).toTimeString().slice(0, 5) };`);
   check("the forecast runs on the demo's clock", clock.got === clock.expected, `pinned ${clock.pinned}: ${clock.got}`);
+  check('a generator that stopped leaves the diagram and its card', !night.genNode && !night.genCard && !/Gen$/.test(night.layout),
+    `node ${night.genNode}, card ${night.genCard}, layout ${night.layout}`);
+  check("but its tile keeps the day's energy", night.genKpi && parseFloat(night.genKpiValue) > 0, `tile ${night.genKpi}, ${night.genKpiValue}`);
+
   // The forecast line is a sentence, and the Ukrainian one is long: on a phone
   // it has to wrap inside the card, not widen the page.
   const storedBeforeLang = await page.eval(`return localStorage.getItem('deye-dashboard:user-config:v1');`);

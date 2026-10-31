@@ -351,9 +351,14 @@ try {
     layout: q('.flow-stage').dataset.layout,
     power: app.state.generator.power, today: app.state.generator.today,
   };`);
-  check('the generator only appears when it has produced something',
-    generator.relevant === (generator.node || generator.kpi),
-    `relevant=${generator.relevant}, node=${generator.node}, kpi=${generator.kpi}, layout=${generator.layout}, ${generator.power} kW / ${generator.today} kWh`);
+  // The diagram shows a running generator only; the tile keeps the day's energy.
+  const producedToday = typeof generator.today === 'number' && generator.today > 0.01;
+  check('the generator is on the diagram only while it runs',
+    generator.node === generator.relevant && generator.relevant === (typeof generator.power === 'number' && generator.power > 0.015),
+    `relevant=${generator.relevant}, node=${generator.node}, layout=${generator.layout}, ${generator.power} kW`);
+  check("its tile shows whenever it has produced something today",
+    generator.kpi === (generator.relevant || producedToday),
+    `kpi=${generator.kpi}, ${generator.today} kWh today`);
 
   group('Console');
   const errs = await page.windowErrors();
