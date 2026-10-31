@@ -6,15 +6,15 @@
  * Nothing is ever re-rendered wholesale.
  */
 
-import { icon } from './icons.js?v=1.2.3';
+import { icon } from './icons.js?v=1.2.4';
 import {
   h, s, setText, setAttr, toggleClass, setStyleVar, formatPower, formatEnergy, formatNumber,
   fmtClock, fmtAgo, fmtHours, isNum, clamp, DASH,
-} from './utils.js?v=1.2.3';
-import { t, getLanguage, LANGUAGES } from './i18n.js?v=1.2.3';
-import { FLOW_LAYOUTS, LINK_KEYS, pickLayout } from './flow-layout.js?v=1.2.3';
-import { DateNav } from './date-nav.js?v=1.2.3';
-import { periodLabel, usesLiveCounters } from './ranges.js?v=1.2.3';
+} from './utils.js?v=1.2.4';
+import { t, getLanguage, LANGUAGES } from './i18n.js?v=1.2.4';
+import { FLOW_LAYOUTS, LINK_KEYS, pickLayout } from './flow-layout.js?v=1.2.4';
+import { DateNav } from './date-nav.js?v=1.2.4';
+import { periodLabel, usesLiveCounters } from './ranges.js?v=1.2.4';
 
 /**
  * KPI tiles. Values arrive from the app as a plain object, because the source

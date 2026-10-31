@@ -8,8 +8,8 @@
  * how the sign auto-detection gets exercised (see energy-model.js).
  */
 
-import { log } from './utils.js?v=1.2.3';
-import { STATUS } from './ha-client.js?v=1.2.3';
+import { log } from './utils.js?v=1.2.4';
+import { STATUS } from './ha-client.js?v=1.2.4';
 
 const P = 'sensor.deye_';
 

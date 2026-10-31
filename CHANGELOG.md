@@ -4,6 +4,17 @@ All notable changes to this project. Versions are the `VERSION` constant in
 `deye-dashboard/js/config.js`, which is also the cache-busting query the panel is
 loaded with.
 
+## 1.2.4
+
+* The power chart no longer draws ramps that never happened. Home Assistant
+  records a sensor's changes, not samples, and the chart joined those changes
+  with a smooth curve: a generator that read 0 W from midnight and started at
+  10:11 rose slowly for ten hours, and a 49-minute silence from the logger
+  became a half-hour slope on the battery. A value now holds until it changes,
+  then steps. A sensor that never changed all day — the grid at 0 W — had a
+  single point and no line at all; it is now drawn across the period.
+* Change `?v=1.2.3` to `?v=1.2.4` in your `panel_custom` entry.
+
 ## 1.2.3
 
 * A generator connected after you saved your entities now appears. Start-up

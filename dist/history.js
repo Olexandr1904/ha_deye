@@ -11,8 +11,8 @@
  * never on a timer.
  */
 
-import { normalizeValue, log, warn, downsample } from './utils.js?v=1.2.3';
-import { t } from './i18n.js?v=1.2.3';
+import { normalizeValue, log, warn, downsample } from './utils.js?v=1.2.4';
+import { t } from './i18n.js?v=1.2.4';
 
 const cache = new Map();
 const TTL_MS = 60000;
@@ -79,6 +79,8 @@ export async function fetchPowerSeries(client, entityIds, from, to, { kinds = {}
     return {};
   }
 
+  // Wider than the spacing downsampling leaves, so only real silences are held.
+  const gapMs = Math.max(5 * 60000, (3 * (to - from)) / maxPoints);
   const out = {};
   for (const [entityId, points] of Object.entries(raw || {})) {
     if (!Array.isArray(points)) continue;
@@ -94,10 +96,33 @@ export async function fetchPowerSeries(client, entityIds, from, to, { kinds = {}
       series.push([t, n.value]);
     }
     series.sort((a, b) => a[0] - b[0]);
-    out[entityId] = series.length > maxPoints ? downsample(series, maxPoints) : series;
+    const sampled = series.length > maxPoints ? downsample(series, maxPoints) : series;
+    out[entityId] = holdBetweenChanges(sampled, to, gapMs);
   }
   log('history:', Object.entries(out).map(([k, v]) => `${k}=${v.length}`).join(' '));
   return toCache(key, out);
+}
+
+/**
+ * Home Assistant records changes, not samples: a state holds until the next
+ * one. Drawn as given, a generator that sat at 0 W from midnight and started at
+ * 10:11 became a ten-hour ramp, and a grid that never left 0 W had one point
+ * and no line. Where two points are further apart than gapMs the earlier value
+ * is repeated at the later time, and the last value is carried to the end of
+ * the window.
+ */
+function holdBetweenChanges(series, to, gapMs) {
+  if (!series.length) return series;
+  const out = [series[0]];
+  for (let i = 1; i < series.length; i++) {
+    const [t, v] = series[i];
+    const prev = out[out.length - 1];
+    if (t - prev[0] > gapMs) out.push([t, prev[1]]);
+    out.push([t, v]);
+  }
+  const last = out[out.length - 1];
+  if (+to - last[0] > gapMs) out.push([+to, last[1]]);
+  return out;
 }
 
 /* ─────────────────────────── statistics ─────────────────────────── */
