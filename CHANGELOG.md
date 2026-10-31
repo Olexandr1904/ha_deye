@@ -4,6 +4,29 @@ All notable changes to this project. Versions are the `VERSION` constant in
 `deye-dashboard/js/config.js`, which is also the cache-busting query the panel is
 loaded with.
 
+## 1.3.0
+
+* The battery card says how long the battery lasts: "On battery ≈ 19 h 56 min
+  (to 10 %)" — the energy above the inverter's cut-off at the house's
+  consumption, averaged over ten minutes. It used to divide by what the battery
+  delivered that minute, which is near zero whenever the sun covers the house,
+  and was hidden below 0.1 kW — that is, most of the day.
+* With a Solcast forecast in Home Assistant, a second line runs the battery
+  through it, half an hour at a time: "down to 10 % tomorrow at 04:43", or
+  "lasts — lowest ≈ 28 % tomorrow at 07:00". A forecast that runs out at night
+  says only how much is left where it ends. At the cut-off the card says "at the
+  cut-off" instead.
+* Three new roles, detected automatically — also for a mapping saved earlier:
+  the battery cut-off (`number.*_battery_shutdown_soc`, the one setpoint the
+  panel reads), and today's and tomorrow's solar forecast. The forecast sensors
+  can no longer be mistaken for the inverter's own solar readings.
+* The generator is on the diagram only while it runs, and leaves it two minutes
+  after it stops. Its KPI tile and its series in the charts keep the day's
+  energy.
+* The settings' autocomplete offers the cut-off setpoint to the cut-off role,
+  and setpoints to no other role.
+* Change `?v=1.2.5` to `?v=1.3.0` in your `panel_custom` entry.
+
 ## 1.2.5
 
 * The beads on the diagram move again, in the direction the energy flows. The

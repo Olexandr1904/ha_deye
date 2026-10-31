@@ -6,13 +6,16 @@
  * configuration.yaml so it no longer depends on this browser's localStorage.
  */
 
-import { ROLES, GROUPS, ROLE_BY_KEY, VERSION, DEFAULT_CONFIG } from './config.js?v=1.2.5';
-import { autoDetect, candidatesFor, entityInfo, scoreCandidate } from './discovery.js?v=1.2.5';
-import { h, setText, setAttr, toggleClass, copyToClipboard, DASH, formatByKind, fmtClock } from './utils.js?v=1.2.5';
-import { t, LANGUAGES } from './i18n.js?v=1.2.5';
-import { icon } from './icons.js?v=1.2.5';
+import { ROLES, GROUPS, ROLE_BY_KEY, VERSION, DEFAULT_CONFIG } from './config.js?v=1.3.0';
+import { autoDetect, candidatesFor, entityInfo, scoreCandidate } from './discovery.js?v=1.3.0';
+import { h, setText, setAttr, toggleClass, copyToClipboard, DASH, formatByKind, fmtClock } from './utils.js?v=1.3.0';
+import { t, LANGUAGES } from './i18n.js?v=1.3.0';
+import { icon } from './icons.js?v=1.3.0';
 
 const DOMAINS = ['sensor.', 'binary_sensor.'];
+
+/** Datalist id for a role that names its own domains. */
+const entityListId = (domains) => `deye-entity-list-${domains.join('-')}`;
 
 export class SettingsUI {
   constructor({ client, entityManager, model, getConfig, onApply, onDemoToggle, onSetLanguage }) {
@@ -124,6 +127,15 @@ export class SettingsUI {
     const datalist = h('datalist', { id: 'deye-entity-list' });
     for (const id of allIds) datalist.appendChild(h('option', { value: id }));
     panel.appendChild(datalist);
+    // A role that is a setpoint (the battery cut-off) names its own domains;
+    // it gets its own list, so number.* never shows up for a measurement.
+    for (const domains of new Set(ROLES.filter((r) => r.domains).map((r) => r.domains.join(',')))) {
+      const list = h('datalist', { id: entityListId(domains.split(',')) });
+      for (const id of this.client.listEntityIds().filter((x) => domains.split(',').some((d) => x.startsWith(`${d}.`))).sort()) {
+        list.appendChild(h('option', { value: id }));
+      }
+      panel.appendChild(list);
+    }
 
     panel.appendChild(h('p', { class: 'help-text' },
       h('span', { html: `${t('settings.entitiesHelp', { n: allIds.length })} ` }),
@@ -143,7 +155,7 @@ export class SettingsUI {
     const current = this.draft.entities[role.key] || '';
     const label = t(`role.${role.key}`, null, role.label);
     const input = h('input', {
-      type: 'text', value: current, list: 'deye-entity-list',
+      type: 'text', value: current, list: role.domains ? entityListId(role.domains) : 'deye-entity-list',
       placeholder: role.optional === false ? t('settings.requiredField') : t('settings.notSet'),
       spellcheck: 'false', autocomplete: 'off',
       oninput: () => { this.draft.entities[role.key] = input.value.trim() || null; this._refreshField(role.key); },
