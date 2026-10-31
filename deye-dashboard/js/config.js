@@ -307,6 +307,21 @@ export function mergeConfig(...layers) {
   return out;
 }
 
+/**
+ * Roles that no configuration layer mentions at all: added by a version newer
+ * than the one that saved the mapping (the generator arrived in 1.1.0). A role
+ * stored as null was cleared by the user, so it is known, not new.
+ */
+export function unknownRoles(...layers) {
+  const known = new Set();
+  for (const layer of layers) {
+    if (layer && layer.entities && typeof layer.entities === 'object') {
+      for (const k of Object.keys(layer.entities)) known.add(k);
+    }
+  }
+  return ROLES.map((r) => r.key).filter((k) => !known.has(k));
+}
+
 export function loadUserConfig() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);

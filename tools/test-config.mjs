@@ -6,7 +6,7 @@
  * their browser still holds the old shapes (`animations: true`, `range: '7d'`),
  * and nothing on screen would say the value was dropped.
  */
-import { mergeConfig, DEFAULT_CONFIG, ROLES, ROLE_BY_KEY, VERSION } from '../deye-dashboard/js/config.js';
+import { mergeConfig, unknownRoles, DEFAULT_CONFIG, ROLES, ROLE_BY_KEY, VERSION } from '../deye-dashboard/js/config.js';
 
 let pass = 0;
 const failures = [];
@@ -62,6 +62,18 @@ eq('an invalid polarity falls back to auto',
 eq('language default', DEFAULT_CONFIG.language, 'en');
 eq('a stored language survives', mergeConfig(null, { language: 'uk' }).language, 'uk');
 eq('an unsupported language falls back', mergeConfig(null, { language: 'ru' }).language, 'en');
+
+/* ── roles a stored mapping has never heard of ── */
+// A mapping saved by 1.0.2 has no generator keys at all; one saved later holds
+// generatorPower: null when the user cleared it. Only the first kind is new, and
+// only new roles may be filled in by detection without asking.
+const savedBy102 = { entities: { pvPower: 'sensor.pv', batterySoc: 'sensor.soc' } };
+ok('a role absent from the saved mapping is new', unknownRoles(savedBy102).includes('generatorPower'));
+ok('a mapped role is not new', !unknownRoles(savedBy102).includes('pvPower'));
+ok('a role the user cleared is not new', !unknownRoles({ entities: { generatorPower: null } }).includes('generatorPower'));
+ok('a role named in the panel_custom config is not new',
+  !unknownRoles({ entities: { generatorPower: 'sensor.gen' } }, savedBy102).includes('generatorPower'));
+eq('with nothing stored every role is new', unknownRoles(null, null).length, ROLES.length);
 
 /* ── role table sanity: the auto-detection depends on it ── */
 ok('every role has a unique key', new Set(ROLES.map((r) => r.key)).size === ROLES.length);

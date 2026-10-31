@@ -1060,6 +1060,43 @@ try {
   await page.setViewport({ width: 1600, height: 1000 });
   await sleep(900);
 
+  /* ─────────────── 13a. a mapping saved before a role existed ─────────────── */
+  group('A mapping saved before the generator roles existed');
+  // Roles added by a later version are absent from a mapping an older one
+  // saved. Start-up detection used to run only when nothing at all was mapped,
+  // so such a browser never got the generator: its kilowatts were missing from
+  // the diagram and a power-balance warning appeared instead.
+  const storedBeforeLegacy = await page.eval(`return localStorage.getItem('deye-dashboard:user-config:v1');`);
+  const reloadWith = async (shapeEntities) => {
+    await page.eval(`${HELPERS}
+      const entities = { ...app.config.entities };
+      (${shapeEntities})(entities);
+      localStorage.setItem('deye-dashboard:user-config:v1', JSON.stringify({ entities }));
+      return 1;`);
+    await page.goto(`${BASE}?demo=1&hour=20`);
+    await poll(page, `!!host.app && host.app._readyDone`, 8000);
+    await sleep(1500);
+    return page.eval(`${HELPERS} return {
+      power: app.config.entities.generatorPower,
+      nodeVisible: !q('.node-generator').hidden,
+      balance: app.state.meta.balance,
+    };`);
+  };
+  const legacy = await reloadWith(`(e) => { for (const k of Object.keys(e)) if (k.startsWith('generator')) delete e[k]; }`);
+  check('a role the saved mapping never had is detected at start-up', !!legacy.power && legacy.nodeVisible,
+    `generatorPower=${legacy.power}, node visible=${legacy.nodeVisible}`);
+  check('with it the power balance closes', legacy.balance !== null && Math.abs(legacy.balance) < 0.5,
+    `balance ${legacy.balance === null ? 'none' : legacy.balance.toFixed(2) + ' kW'}`);
+  const cleared = await reloadWith(`(e) => { e.generatorPower = null; }`);
+  check('a role the user cleared stays cleared', cleared.power === null, `generatorPower=${cleared.power}`);
+  await page.eval(`const before = ${JSON.stringify(storedBeforeLegacy)};
+    if (before === null) localStorage.removeItem('deye-dashboard:user-config:v1');
+    else localStorage.setItem('deye-dashboard:user-config:v1', before);
+    return 1;`);
+  await page.goto(`${BASE}?demo=1&hour=20`);
+  await poll(page, `!!host.app && host.app._readyDone`, 8000);
+  await sleep(1500);
+
   /* ─────────────── 14. sensor dialog ─────────────── */
   group('Sensor dialog');
   // Click and read are separate protocol calls, and the waiting between them
