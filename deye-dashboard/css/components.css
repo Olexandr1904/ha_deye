@@ -53,7 +53,10 @@
   animation: bead-run var(--dur, 1.4s) linear infinite;
 }
 .flow-link[data-dir="fromHub"] .link-beads { animation-direction: reverse; }
-@keyframes bead-run { to { stroke-dashoffset: calc(-1 * var(--bead-period)); } }
+/* -1px, not -1: the period is unitless, and a unitless end value is not
+   interpolated from the 0px start — the offset jumped by exactly one pattern
+   period every half cycle and the beads stood still. */
+@keyframes bead-run { to { stroke-dashoffset: calc(-1px * var(--bead-period)); } }
 
 /* ─── nodes ─── */
 
