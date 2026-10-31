@@ -177,6 +177,19 @@ try {
   check('house beads travel from the inverter to the house', travel.load.startAtNode && rises(travel.load.offsets),
     `path starts at the node: ${travel.load.startAtNode}, offset at 25/50/75 %: ${travel.load.offsets.join(' / ')}`);
 
+  // A bead is a zero-length dash with round caps — a circle as wide as the
+  // stroke. A dash 1.3 long under a 4.6 stroke drew a capsule, an oval.
+  const beads = await page.eval(`${HELPERS}
+    const shape = () => { const cs = getComputedStyle(q('.link-solar .link-beads'));
+      return { dash: parseFloat(cs.strokeDasharray), width: parseFloat(cs.strokeWidth), cap: cs.strokeLinecap }; };
+    const stage = q('.flow-stage'); const was = stage.dataset.layout;
+    const wide = shape(); stage.dataset.layout = 'narrow'; const narrow = shape(); stage.dataset.layout = was;
+    return { wide, narrow };`);
+  for (const [layout, b] of Object.entries(beads)) {
+    check(`${layout} layout: the beads are circles`, b.cap === 'round' && b.dash <= 0.05 * b.width,
+      `dash ${b.dash} under a ${b.width} stroke, ${b.cap} caps`);
+  }
+
   await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   await sleep(300);
   const reduced = await page.eval(`${HELPERS} return getComputedStyle(q('.link-solar .link-beads')).animationDuration;`);
