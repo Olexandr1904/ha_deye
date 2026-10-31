@@ -87,6 +87,18 @@
   .field { grid-template-columns: 1fr; gap: 5px; }
   .modal-panel { max-height: 94vh; }
   .modal-body { padding: 13px; }
+  /* The dialog's head and foot are single rows that a phone cannot fit, and
+     the panel clips whatever does not fit — the close button and Save simply
+     vanished. Wrap them: title and close on the first line, the tabs sharing
+     the second; the buttons two to a line, the status line above them. */
+  .modal-head { flex-wrap: wrap; row-gap: 10px; padding: 13px; }
+  .modal-head .tabs { order: 1; flex: 1 1 100%; overflow-x: auto; }
+  .modal-head .tab-btn { flex: 1 1 auto; padding: 6px 8px; }
+  .modal-foot { flex-wrap: wrap; padding: 11px 13px; }
+  .modal-foot .btn { flex: 1 1 0; }
+  .modal-foot .spacer { display: none; }
+  .modal-foot .modal-status { order: -1; flex: 1 1 100%; }
+  .modal-foot .modal-status:empty { display: none; }
 }
 
 /* ── very narrow ── */
