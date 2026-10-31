@@ -7,8 +7,8 @@
  * Updates are event-driven: subscribe to state_changed, recompute changed roles only.
  */
 
-import { ROLES, ROLE_BY_KEY } from './config.js?v=1.2.2';
-import { normalizeValue, rafThrottle, log, isNum } from './utils.js?v=1.2.2';
+import { ROLES, ROLE_BY_KEY } from './config.js?v=1.2.3';
+import { normalizeValue, rafThrottle, log, isNum } from './utils.js?v=1.2.3';
 
 const UNAVAILABLE = new Set(['unavailable', 'unknown', 'none', '', 'null']);
 

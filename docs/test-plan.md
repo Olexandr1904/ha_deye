@@ -15,6 +15,9 @@ blind spot.
 | KPI tiles and the chart legend disagreed for the same period | The two read different entities and no check ever compared them. |
 | A year with two months of data spread those months across the whole axis | Bar count was asserted as `> 0`. |
 | One finger could not scroll the page on a phone inside Home Assistant | The browser suite ran only the standalone page, where the panel is its own scroller. Home Assistant gives a panel no height, so there the document scrolls — a container the suite never had, and nothing ever swiped. |
+| The settings dialog lost its close button and Save on a phone | The responsive checks measured horizontal overflow of the page; the dialog clips its own overflow, so nothing ever overflowed where they looked, and the dialog was only ever opened at 1600 px. |
+| A generator connected later never appeared for a mapping saved before 1.1.0 | Every run starts from empty storage and detects everything, so no test ever had a mapping older than the roles it was being checked against. |
+| An unmapped source's power was credited to a grid reading 0 W | The cascade was only fed balanced states. The grid as the residual looks right until something is missing. |
 | The sticky top bar scrolled away inside Home Assistant | Same blind spot, found one release later: the bar sticks within its nearest scroll container, which was the panel, and nothing ever scrolled and then looked at the bar. The standalone page now scrolls its document as Home Assistant does, so the two no longer differ. |
 
 Four lessons, and they shape everything below:
