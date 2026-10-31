@@ -14,6 +14,7 @@
 import { LEARN_KEY } from './config.js';
 import { isNum, log, clamp } from './utils.js';
 import { num } from './entity-manager.js';
+import { usableKwh, runtimeHours, forecastRuntime, mergeSlots, RollingMean } from './battery-runtime.js';
 
 const OFFLINE_WORDS = /(off|standby|stand_by|sleep|shutdown|stop|idle|disconnect|waiting)/i;
 const FAULT_WORDS = /(fault|error|alarm|fail)/i;
@@ -94,6 +95,7 @@ class SignLearner {
 
 /* ─────────────────────────── the model ─────────────────────────── */
 
+
 export class EnergyModel {
   constructor(config) {
     this.config = config;
@@ -106,9 +108,17 @@ export class EnergyModel {
       batteryChargeToday: null, batteryDischargeToday: null,
     };
     this._peakPv = 0;
+    // The house's consumption over the last ten minutes: time on battery taken
+    // from the instantaneous reading would halve and double with the fridge.
+    this._loadMean = new RollingMean(10 * 60000);
   }
 
-  setConfig(config) { this.config = config; }
+  setConfig(config) {
+    this.config = config;
+    // The load entity or its direction may have changed: old readings are not
+    // this sensor's.
+    this._loadMean.reset();
+  }
 
   _restoreLearned() {
     try {
@@ -139,6 +149,9 @@ export class EnergyModel {
    * @param {Object} meta {connection, lastUpdate}
    */
   build(values, meta = {}) {
+    // The client's clock: the demo pins its time with ?hour=, and the forecast
+    // and the averages have to run on the same clock as the data.
+    const now = isNum(meta.now) ? meta.now : Date.now();
     const g = (k) => num(values, k);
     const txt = (k) => (values[k] && typeof values[k].value === 'string' ? values[k].value : null);
 
@@ -245,7 +258,8 @@ export class EnergyModel {
         dischargeToday: g('batteryDischargeToday'),
         capacity: g('batteryCapacity'),
         timeToFull: null,
-        timeToEmpty: null,
+        runtime: null,       // {hours, reservePct, loadKw, atCutoff} at the house's consumption
+        forecast: null,      // forecastRuntime() through the solar forecast
       },
       grid: {
         power: gridPower,
@@ -298,15 +312,35 @@ export class EnergyModel {
         },
         balance: null,
         scaleKw: null,
+        now,                 // the clock these figures were computed on
       },
     };
 
     /* ── derived values ── */
     // Capacity: from settings, otherwise from an entity (ha-solarman has battery_capacity)
     const capacity = isNum(this.config.batteryCapacityKwh) ? this.config.batteryCapacityKwh : g('batteryCapacity');
-    if (isNum(capacity) && isNum(soc) && isNum(batteryPower) && Math.abs(batteryPower) > 0.1) {
-      if (batteryPower > 0) state.battery.timeToFull = (capacity * (100 - soc) / 100) / batteryPower;
-      else state.battery.timeToEmpty = (capacity * soc / 100) / -batteryPower;
+    state.battery.capacity = capacity;
+    if (isNum(capacity) && isNum(soc) && isNum(batteryPower) && batteryPower > 0.1) {
+      state.battery.timeToFull = (capacity * (100 - soc) / 100) / batteryPower;
+    }
+
+    // Time on battery: what is left above the inverter's cut-off, at the house's
+    // consumption — not at what the battery delivers this minute, which is near
+    // zero whenever the sun covers the house. Then the same through the forecast.
+    // A load that went unavailable stops the answer, and its old readings must
+    // not come back as the average once it returns.
+    if (isNum(load)) this._loadMean.push(now, load); else this._loadMean.reset();
+    const loadKw = isNum(load) ? this._loadMean.mean(now) : null;
+    const cutoff = g('batteryShutdownSoc');
+    const reservePct = isNum(cutoff) ? clamp(cutoff, 0, 100) : 0;
+    const usable = usableKwh(capacity, soc, reservePct);
+    const hours = runtimeHours(usable, loadKw);
+    if (isNum(hours)) state.battery.runtime = { hours, reservePct, loadKw, atCutoff: usable <= 0 };
+    const slots = mergeSlots(
+      values.pvForecastToday && values.pvForecastToday.forecast,
+      values.pvForecastTomorrow && values.pvForecastTomorrow.forecast);
+    if (slots.length && isNum(loadKw)) {
+      state.battery.forecast = forecastRuntime({ now, socPct: soc, capacityKwh: capacity, reservePct, loadKw, slots });
     }
 
     const dcIn = (isNum(pvPower) ? pvPower : 0)

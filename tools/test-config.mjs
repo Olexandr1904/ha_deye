@@ -7,6 +7,7 @@
  * and nothing on screen would say the value was dropped.
  */
 import { mergeConfig, unknownRoles, DEFAULT_CONFIG, ROLES, ROLE_BY_KEY, VERSION } from '../deye-dashboard/js/config.js';
+import { autoDetect } from '../deye-dashboard/js/discovery.js';
 
 let pass = 0;
 const failures = [];
@@ -76,6 +77,40 @@ ok('a role the user cleared is not new', !unknownRoles({ entities: { generatorPo
 ok('a role named in the panel_custom config is not new',
   !unknownRoles({ entities: { generatorPower: 'sensor.gen' } }, savedBy102).includes('generatorPower'));
 eq('with nothing stored every role is new', unknownRoles(null, null).length, ROLES.length);
+
+/* ── the battery cut-off and the solar forecast are found among their neighbours ── */
+// Entity names, units and classes as a real install has them. The cut-off is a
+// number entity — a setpoint — which only its own role may read; the forecast
+// sensors sit next to the inverter's own daily production and must not take it.
+const st = (entity_id, state, unit, device_class, friendly_name) =>
+  [entity_id, { entity_id, state, attributes: { unit_of_measurement: unit, device_class, friendly_name } }];
+const installStates = Object.fromEntries([
+  st('sensor.inverter_pv_power', '355', 'W', 'power', 'Inverter PV Power'),
+  st('sensor.inverter_load_power', '501', 'W', 'power', 'Inverter Load Power'),
+  st('sensor.inverter_battery_power', '73', 'W', 'power', 'Inverter Battery Power'),
+  st('sensor.inverter_grid_power', '0', 'W', 'power', 'Inverter Grid Power'),
+  st('sensor.inverter_battery', '99', '%', 'battery', 'Inverter Battery'),
+  st('sensor.inverter_battery_capacity', '11.2', 'kWh', 'energy_storage', 'Inverter Battery Capacity'),
+  st('sensor.inverter_today_production', '1.3', 'kWh', 'energy', 'Inverter Today Production'),
+  st('number.inverter_battery_shutdown_soc', '10', '%', undefined, 'Inverter Battery Shutdown SOC'),
+  st('number.inverter_battery_restart_soc', '20', '%', undefined, 'Inverter Battery Restart SOC'),
+  st('number.inverter_battery_low_soc', '20', '%', undefined, 'Inverter Battery Low SOC'),
+  st('number.inverter_battery_grid_charging_start', '25', '%', undefined, 'Inverter Battery Grid Charging Start'),
+  st('sensor.solcast_pv_forecast_forecast_today', '3.3585', 'kWh', 'energy', 'Solcast PV Forecast Forecast Today'),
+  st('sensor.solcast_pv_forecast_forecast_tomorrow', '10.7601', 'kWh', 'energy', 'Solcast PV Forecast Forecast Tomorrow'),
+  st('sensor.solcast_pv_forecast_forecast_remaining_today', '0.7883', 'kWh', 'energy', 'Solcast PV Forecast Forecast Remaining Today'),
+  st('sensor.solcast_pv_forecast_forecast_this_hour', '514', 'Wh', 'energy', 'Solcast PV Forecast Forecast This Hour'),
+  st('sensor.solcast_pv_forecast_peak_forecast_today', '1188', 'W', 'power', 'Solcast PV Forecast Peak Forecast Today'),
+]);
+const { mapping: found } = autoDetect(installStates, {});
+eq('the cut-off is the shutdown SOC setpoint', found.batteryShutdownSoc, 'number.inverter_battery_shutdown_soc');
+eq("today's forecast is the whole-day forecast", found.pvForecastToday, 'sensor.solcast_pv_forecast_forecast_today');
+eq("tomorrow's forecast", found.pvForecastTomorrow, 'sensor.solcast_pv_forecast_forecast_tomorrow');
+eq("the forecast does not take the inverter's daily production", found.pvToday, 'sensor.inverter_today_production');
+eq('the state of charge stays a measurement', found.batterySoc, 'sensor.inverter_battery');
+ok('no other role reads a setpoint',
+  Object.entries(found).every(([k, v]) => k === 'batteryShutdownSoc' || !String(v || '').startsWith('number.')),
+  JSON.stringify(Object.entries(found).filter(([k, v]) => k !== 'batteryShutdownSoc' && String(v || '').startsWith('number.'))));
 
 /* ── role table sanity: the auto-detection depends on it ── */
 ok('every role has a unique key', new Set(ROLES.map((r) => r.key)).size === ROLES.length);

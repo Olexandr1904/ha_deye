@@ -43,6 +43,8 @@ export class DemoClient {
   get status() { return STATUS.CONNECTED; }
   get connected() { return true; }
   get isReady() { return this._ready; }
+  /** The demo's clock (pinned by ?hour=), which the model's time-based figures follow. */
+  now() { return this._now().getTime(); }
   getStates() { return this._states; }
   getState(id) { return this._states[id] || null; }
   listEntityIds() { return Object.keys(this._states); }
@@ -104,7 +106,7 @@ export class DemoClient {
     this._build(sim);
   }
 
-  _set(id, state, unit, deviceClass, name, stateClass) {
+  _set(id, state, unit, deviceClass, name, stateClass, extra = null) {
     const prev = this._states[id];
     const str = typeof state === 'number' ? String(Math.round(state * 100) / 100) : String(state);
     if (prev && prev.state === str) return;
@@ -116,6 +118,7 @@ export class DemoClient {
         device_class: deviceClass || undefined,
         state_class: stateClass || undefined,
         friendly_name: name || id,
+        ...(extra || {}),
       },
       last_updated: new Date().toISOString(),
       last_changed: new Date().toISOString(),
@@ -145,6 +148,17 @@ export class DemoClient {
     this._set(`${P}battery_temperature`, 23.5 + sim.noise * 1.4, '°C', 'temperature', 'Deye battery temperature', 'measurement');
     this._set(`${P}battery_status`, sim.battery > 0.05 ? 'Charge' : sim.battery < -0.05 ? 'Discharge' : 'Standby', '', '', 'Deye battery status');
     this._set(`${P}battery_soh`, 98, '%', '', 'Deye battery SOH');
+    // The simulated battery's size, and the inverter's cut-off — a setpoint, as
+    // on the real inverter. Time on battery is counted against both.
+    this._set(`${P}battery_capacity`, 20, 'kWh', 'energy_storage', 'Deye battery capacity');
+    this._set('number.deye_battery_shutdown_soc', 10, '%', '', 'Deye battery shutdown SOC');
+    // A solar forecast in Solcast's shape: the day's kWh as the state, the
+    // half-hour slots in detailedForecast. The same sun curve, without its noise.
+    for (const [suffix, offset, label] of [['today', 0, 'Today'], ['tomorrow', 1, 'Tomorrow']]) {
+      const slots = this._forecast(offset);
+      this._set(`sensor.solcast_pv_forecast_forecast_${suffix}`, slots.reduce((a, x) => a + x.pv_estimate / 2, 0), 'kWh', 'energy',
+        `Solcast PV Forecast Forecast ${label}`, undefined, { detailedForecast: slots });
+    }
 
     this._set(`${P}total_grid_power`, W(sim.grid), 'W', 'power', 'Deye total grid power', 'measurement');
     this._set(`${P}total_load_power`, W(sim.load), 'W', 'power', 'Deye total load power', 'measurement');
@@ -179,6 +193,21 @@ export class DemoClient {
       this._set(`${P}ac_${ph}_voltage`, 229 + i * 1.4 + sim.noise * 2, 'V', 'voltage', `Deye AC ${ph.toUpperCase()} voltage`, 'measurement');
       this._set(`${P}ac_${ph}_current`, W(sim.load * phases[i]) / 230, 'A', 'current', `Deye AC ${ph.toUpperCase()} current`, 'measurement');
     });
+  }
+
+  /** Half-hour forecast slots for today (offset 0) or tomorrow (1), cached per day. */
+  _forecast(offset) {
+    const day = this._now(); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() + offset);
+    const key = `${day.getTime()}`;
+    this._forecasts = this._forecasts || {};
+    if (!this._forecasts[key]) {
+      this._forecasts[key] = Array.from({ length: 48 }, (_, i) => {
+        const start = new Date(day.getTime() + i * 30 * 60000);
+        const pv = Math.round(simulate(new Date(start.getTime() + 15 * 60000), 50).pv * 1000) / 1000;
+        return { period_start: start.toISOString(), pv_estimate: pv, pv_estimate10: Math.round(pv * 600) / 1000, pv_estimate90: Math.round(pv * 1200) / 1000 };
+      });
+    }
+    return this._forecasts[key];
   }
 
   /**

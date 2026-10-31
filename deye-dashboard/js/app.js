@@ -197,6 +197,7 @@ export class DeyeDashboard {
     if (this._destroyed) return;
     const values = this.entityManager.values;
     this.state = this.model.build(values, {
+      now: typeof this.client.now === 'function' ? this.client.now() : Date.now(),
       lastUpdate: this.entityManager.lastUpdate,
       connection: this.client.status,
       demo: this.client.mode === 'demo',

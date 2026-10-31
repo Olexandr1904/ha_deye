@@ -15,13 +15,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Calendar arithmetic, config migration, energy distribution, history, axes
+      - name: Calendar arithmetic, config migration, energy distribution, history, axes, time on battery
         run: |
           node tools/test-ranges.mjs
           node tools/test-config.mjs
           node tools/test-model.mjs
           node tools/test-history.mjs
           node tools/test-charts.mjs
+          node tools/test-runtime.mjs
       - name: Deployment YAML and import stamping
         run: python3 tools/test-deploy.py
       - name: dist/ matches the source

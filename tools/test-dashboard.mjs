@@ -654,6 +654,17 @@ try {
   check('entity autocomplete populated', settings.datalistOptions >= 20, `${settings.datalistOptions} options`);
   check('role-match validation is green', settings.confHigh >= 15 && settings.confMismatch === 0, `high=${settings.confHigh}, mismatch=${settings.confMismatch}`);
 
+  // The battery cut-off is a setpoint (number.*), the one role allowed to read
+  // one: its autocomplete has to offer it, and a measurement role's must not.
+  const lists = await page.eval(`${HELPERS}
+    const opts = (key) => { const input = app.settings.fields[key].input; const dl = sr.getElementById(input.getAttribute('list'));
+      return dl ? [...dl.options].map((o) => o.value) : []; };
+    return { cutoff: opts('batteryShutdownSoc'), soc: opts('batterySoc') };`);
+  check('the cut-off field suggests the shutdown SOC setpoint', lists.cutoff.includes('number.deye_battery_shutdown_soc'),
+    `${lists.cutoff.filter((x) => x.startsWith('number.')).join(', ') || 'no number.* entity'}`);
+  check('a measurement field suggests no setpoints', lists.soc.length > 0 && !lists.soc.some((x) => x.startsWith('number.')),
+    `${lists.soc.length} options, number.*: ${lists.soc.filter((x) => x.startsWith('number.')).length}`);
+
   const tabs = await page.eval(`${HELPERS}
     const out = {};
     for (const b of qa('.modal .tab-btn')) {
@@ -1140,6 +1151,96 @@ try {
     if (before === null) localStorage.removeItem('deye-dashboard:user-config:v1');
     else localStorage.setItem('deye-dashboard:user-config:v1', before);
     return 1;`);
+  await page.goto(`${BASE}?demo=1&hour=20`);
+  await poll(page, `!!host.app && host.app._readyDone`, 8000);
+  await sleep(1500);
+
+  /* ─────────────── 13b. time on battery ─────────────── */
+  group('Time on battery and the solar forecast');
+  // 22:00: the sun is down and the battery carries the house. The demo
+  // inverter cuts the battery off at 10 %.
+  await page.goto(`${BASE}?demo=1&hour=22`);
+  await poll(page, `!!host.app && host.app._readyDone`, 8000);
+  await sleep(1500);
+  const night = await page.eval(`${HELPERS}
+    const b = app.state.battery;
+    const row = (k) => { const r = app.renderer.r.battery.rows[k]; return r ? { shown: !r.node.hidden, text: r.value.textContent.trim() } : null; };
+    return {
+      soc: b.soc, capacity: b.capacity, runtime: b.runtime, forecast: b.forecast, load: app.state.load.power,
+      onBattery: row('runtime'), withForecast: row('forecast'), eta: row('eta'),
+      genNode: !q('.node-generator').hidden, genCard: !q('.card-generator').hidden, layout: q('.flow-stage').dataset.layout,
+      genKpi: !q('.kpi[data-key="generator"]').hidden, genKpiValue: txt('.kpi[data-key="generator"] .kpi-num'),
+    };`);
+  const expectHours = night.runtime ? (night.capacity * (night.soc - 10) / 100) / night.runtime.loadKw : null;
+  check("time on battery is counted to the 10 % cut-off at the house's consumption",
+    !!night.runtime && night.runtime.reservePct === 10 && Math.abs(night.runtime.hours - expectHours) < 0.01,
+    night.runtime ? `${night.runtime.hours.toFixed(2)} h = ${night.capacity} kWh × (${night.soc.toFixed(1)} − 10) % / ${night.runtime.loadKw.toFixed(2)} kW` : 'no runtime');
+  check('and the battery card says so', night.onBattery && night.onBattery.shown && /^≈ .+\(to 10 %\)$/.test(night.onBattery.text),
+    night.onBattery ? night.onBattery.text : 'no row');
+  check('the solar forecast gives a cut-off time or a lowest point',
+    !!night.forecast && night.withForecast && night.withForecast.shown && /^(down to 10 %|lasts — lowest ≈ \d+ %) .*\d\d:\d\d$/.test(night.withForecast.text),
+    night.withForecast ? night.withForecast.text : 'no row');
+  check('time to full is not shown while discharging', night.eta && !night.eta.shown, night.eta ? night.eta.text : 'no row');
+  // The demo pins its clock with ?hour=; the forecast has to run on that clock,
+  // not on the machine's — else 22:00's battery is driven through the real
+  // afternoon's sun.
+  const clock = await page.eval(`${HELPERS}
+    let mod;
+    try { mod = await import(new URL('js/battery-runtime.js', location.href)); }
+    catch (e) { mod = await import(new URL('battery-runtime.js', location.href)); }
+    const b = app.state.battery, v = app.entityManager.values;
+    const expected = mod.forecastRuntime({ now: app.client.now(), socPct: b.soc, capacityKwh: b.capacity,
+      reservePct: b.runtime.reservePct, loadKw: b.runtime.loadKw, slots: mod.mergeSlots(v.pvForecastToday.forecast, v.pvForecastTomorrow.forecast) });
+    return { got: JSON.stringify(b.forecast), expected: JSON.stringify(expected), pinned: new Date(app.client.now()).toTimeString().slice(0, 5) };`);
+  check("the forecast runs on the demo's clock", clock.got === clock.expected, `pinned ${clock.pinned}: ${clock.got}`);
+  // The forecast line is a sentence, and the Ukrainian one is long: on a phone
+  // it has to wrap inside the card, not widen the page.
+  const storedBeforeLang = await page.eval(`return localStorage.getItem('deye-dashboard:user-config:v1');`);
+  await page.setViewport({ width: 390, height: 844, dpr: 3, mobile: true });
+  await sleep(700);
+  await page.eval(`${HELPERS} q('.lang-btn').click(); return 1;`);
+  await poll(page, `q('.lang-btn').textContent.trim() === 'UA'`, 5000);
+  await sleep(500);
+  const phoneUk = await page.eval(`${HELPERS}
+    const v = app.renderer.r.battery.rows.forecast.value.getBoundingClientRect();
+    const c = q('.card-battery').getBoundingClientRect();
+    return { doc: document.documentElement.scrollWidth, inner: innerWidth, value: Math.round(v.right), card: Math.round(c.right),
+      text: app.renderer.r.battery.rows.forecast.value.textContent.trim() };`);
+  check('on a phone the Ukrainian forecast line wraps inside the card',
+    phoneUk.doc <= phoneUk.inner + 1 && phoneUk.value <= phoneUk.card,
+    `page ${phoneUk.doc}/${phoneUk.inner} px, line ends at ${phoneUk.value} of ${phoneUk.card}: ${phoneUk.text}`);
+  await page.eval(`${HELPERS} q('.lang-btn').click(); return 1;`);
+  await poll(page, `q('.lang-btn').textContent.trim() === 'EN'`, 5000);
+  await page.eval(`const before = ${JSON.stringify(storedBeforeLang)};
+    if (before === null) localStorage.removeItem('deye-dashboard:user-config:v1');
+    else localStorage.setItem('deye-dashboard:user-config:v1', before);
+    return 1;`);
+  await page.send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+  await page.setViewport({ width: 1600, height: 1000 });
+  await sleep(500);
+
+  // At the cut-off there is nothing left to count down.
+  await page.goto(`${BASE}?demo=1&hour=22`);
+  await poll(page, `!!host.app && host.app._readyDone`, 8000);
+  await sleep(1500);
+  const cutoff = await page.eval(`${HELPERS}
+    clearInterval(app.client._timer); app.client._tick = () => {};
+    app.client._set('sensor.deye_battery_soc', 8, '%', 'battery', 'Deye battery SOC', 'measurement');
+    await new Promise((r) => setTimeout(r, 500));
+    const rows = app.renderer.r.battery.rows;
+    return { runtime: rows.runtime.value.textContent.trim(), forecastShown: !rows.forecast.node.hidden };`);
+  check('at the cut-off the card says so and drops the forecast', /^at the cut-off \(10 %\)$/.test(cutoff.runtime) && !cutoff.forecastShown,
+    `${cutoff.runtime}, forecast shown: ${cutoff.forecastShown}`);
+
+  // 10:00: the demo battery is half full and charging at about 6 kW (by 13:30
+  // it is full and the charge has tapered to nothing).
+  await page.goto(`${BASE}?demo=1&hour=10`);
+  await poll(page, `!!host.app && host.app._readyDone`, 8000);
+  await sleep(1500);
+  const noon = await page.eval(`${HELPERS}
+    const r = app.renderer.r.battery.rows.eta;
+    return { charging: app.state.battery.charging, shown: !r.node.hidden, label: r.label.textContent.trim(), text: r.value.textContent.trim() };`);
+  check('while charging, time to full is shown', noon.charging && noon.shown && /full/i.test(noon.label), `${noon.label}: ${noon.text}`);
   await page.goto(`${BASE}?demo=1&hour=20`);
   await poll(page, `!!host.app && host.app._readyDone`, 8000);
   await sleep(1500);

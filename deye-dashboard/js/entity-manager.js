@@ -9,6 +9,7 @@
 
 import { ROLES, ROLE_BY_KEY } from './config.js';
 import { normalizeValue, rafThrottle, log, isNum } from './utils.js';
+import { parseForecastSlots } from './battery-runtime.js';
 
 const UNAVAILABLE = new Set(['unavailable', 'unknown', 'none', '', 'null']);
 
@@ -129,8 +130,12 @@ export class EntityManager {
       stale: this._isStale(lastUpdated),
       previous: prev && prev.available ? prev.value : null,
     };
+    // A forecast lives in an attribute (detailedForecast). Parsed here, when the
+    // entity changes — not on every model build.
+    if (role.forecast) value.forecast = parseForecastSlots(attrs.detailedForecast);
     this.values[roleKey] = value;
-    if (!prev || prev.value !== value.value || prev.status !== 'ok' || prev.stale !== value.stale) {
+    if (!prev || prev.value !== value.value || prev.status !== 'ok' || prev.stale !== value.stale
+        || (role.forecast && JSON.stringify(prev.forecast) !== JSON.stringify(value.forecast))) {
       this._changed.add(roleKey);
     }
     if (norm.assumed && (!prev || !prev.assumedUnit)) {
