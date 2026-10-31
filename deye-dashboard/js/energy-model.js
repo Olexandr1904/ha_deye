@@ -19,6 +19,18 @@ import { usableKwh, runtimeHours, forecastRuntime, mergeSlots, RollingMean } fro
 const OFFLINE_WORDS = /(off|standby|stand_by|sleep|shutdown|stop|idle|disconnect|waiting)/i;
 const FAULT_WORDS = /(fault|error|alarm|fail)/i;
 const ONLINE_WORDS = /(normal|running|run|grid|generat|on_?grid|self|work|active|charg|discharg|bypass|eps|hybrid)/i;
+// "off" / "false": a binary_sensor of device_class "problem" at rest.
+const QUIET_ALARM = /^(none|no|ok|normal|off|false|no[ _-]?(alarm|fault|error)s?)$/i;
+
+/**
+ * An alarm text that says all is well. A text role passes the state through
+ * untouched, so a numeric register's zero may read "0.0". Number(), not
+ * parseFloat(): "0x0010" is a fault code, not zero.
+ */
+function quietAlarm(text) {
+  const s = text.trim();
+  return s === '' || QUIET_ALARM.test(s) || Number(s) === 0;
+}
 
 /* ───────────────────── polarity detection ───────────────────── */
 
@@ -304,8 +316,7 @@ export class EnergyModel {
         power: inverterPower,
         temperature: g('inverterTemperature'),
         statusText: invStatus,
-        // "off" / "false": a binary_sensor of device_class "problem" at rest.
-        alarm: alarm && !/^(0|none|no|ok|normal|off|false)$/i.test(alarm) ? alarm : null,
+        alarm: alarm && !quietAlarm(alarm) ? alarm.trim() : null,
         ratedPowerKw,
         efficiency: null,
         state: 'unknown',
