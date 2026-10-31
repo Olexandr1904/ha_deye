@@ -244,7 +244,7 @@ The plan behind them, and what is deliberately not covered, is in
 ./tools/run-tests.sh
 ```
 
-One command runs everything: 228 unit assertions (period arithmetic, energy
+One command runs everything: 232 unit assertions (period arithmetic, energy
 distribution, history windowing, chart axes, stored-config migration and the
 deployment YAML — no browser,
 under a second) and then 192

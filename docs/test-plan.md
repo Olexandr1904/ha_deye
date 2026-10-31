@@ -18,6 +18,7 @@ blind spot.
 | The settings dialog lost its close button and Save on a phone | The responsive checks measured horizontal overflow of the page; the dialog clips its own overflow, so nothing ever overflowed where they looked, and the dialog was only ever opened at 1600 px. |
 | A generator connected later never appeared for a mapping saved before 1.1.0 | Every run starts from empty storage and detects everything, so no test ever had a mapping older than the roles it was being checked against. |
 | An unmapped source's power was credited to a grid reading 0 W | The cascade was only fed balanced states. The grid as the residual looks right until something is missing. |
+| The power chart drew a ten-hour ramp for a generator that was off until 10:11 | The demo reports every sensor every few seconds, so no series ever had a gap; and nothing compared the drawn line with the state Home Assistant held in between. |
 | The sticky top bar scrolled away inside Home Assistant | Same blind spot, found one release later: the bar sticks within its nearest scroll container, which was the panel, and nothing ever scrolled and then looked at the bar. The standalone page now scrolls its document as Home Assistant does, so the two no longer differ. |
 
 Four lessons, and they shape everything below:

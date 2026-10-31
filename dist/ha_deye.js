@@ -16,10 +16,10 @@
  * panel / route properties. We never open a connection of our own.
  */
 
-import { DeyeDashboard } from './app.js?v=1.2.3';
-import { VERSION } from './config.js?v=1.2.3';
-import { log } from './utils.js?v=1.2.3';
-import { t, setLanguage, resolveLanguage } from './i18n.js?v=1.2.3';
+import { DeyeDashboard } from './app.js?v=1.2.4';
+import { VERSION } from './config.js?v=1.2.4';
+import { log } from './utils.js?v=1.2.4';
+import { t, setLanguage, resolveLanguage } from './i18n.js?v=1.2.4';
 
 const BASE = new URL('.', import.meta.url);
 const CSS_FILES = ['css/dashboard.css', 'css/components.css', 'css/responsive.css'];
