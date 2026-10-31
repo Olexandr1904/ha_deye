@@ -7,7 +7,7 @@
  * days of export as one day's. Nothing in the browser suite could see it — the
  * demo answered exactly, and the checks only counted bars.
  */
-import { fetchEnergyBars, fetchEnergyTotals, fetchSensorStats, clearHistoryCache } from '../deye-dashboard/js/history.js';
+import { fetchEnergyBars, fetchEnergyTotals, fetchSensorStats, fetchPowerSeries, clearHistoryCache } from '../deye-dashboard/js/history.js';
 
 let pass = 0;
 const failures = [];
@@ -137,6 +137,33 @@ const bandClient = {
 const band = await fetchSensorStats(bandClient, ID, day(24), day(25), 'day', 'voltage');
 eq('the band chart keeps only buckets inside the period', band.length, 1);
 near('with the values of that bucket', band[0].mean, 55);
+
+/* ── a state holds until it changes ── */
+// Home Assistant records changes, not samples. The generator read 0 W from
+// midnight until it started at 10:11, and the chart drew a ten-hour ramp
+// between those two points; the grid, at 0 W all day, had one point and no
+// line at all.
+const at = (h, m = 0, sec = 0) => +new Date(2026, 9, 31, h, m, sec, 0);
+const histClient = (rows) => ({
+  getState: () => ({ attributes: { unit_of_measurement: 'W' } }),
+  async callWS(msg) { return msg.type === 'history/history_during_period' ? rows : null; },
+});
+const lu = (t, s) => ({ s: String(s), lu: t / 1000 });
+clearHistoryCache();
+let power = await fetchPowerSeries(histClient({
+  'sensor.gen': [lu(at(0), 0), lu(at(10, 11), 6000), lu(at(10, 11, 5), 6005)],
+  'sensor.grid': [lu(at(0), 0)],
+}), ['sensor.gen', 'sensor.grid'], new Date(at(0)), new Date(at(11)));   // Dates, as periodBounds gives them
+const gen = power['sensor.gen'];
+eq('the value holds until the next change, then steps', gen.slice(0, 3), [[at(0), 0], [at(10, 11), 0], [at(10, 11), 6]]);
+eq('the last value holds to the end of the window', gen[gen.length - 1], [at(11), 6.005]);
+eq('a single state is a line across the window', power['sensor.grid'], [[at(0), 0], [at(11), 0]]);
+
+// A sensor reporting every five seconds must not become a staircase.
+clearHistoryCache();
+const dense = Array.from({ length: 120 }, (_, i) => lu(at(10) + i * 5000, 500 + (i % 7) * 10));
+power = await fetchPowerSeries(histClient({ 'sensor.load': dense }), ['sensor.load'], new Date(at(10)), new Date(at(10) + 120 * 5000));
+eq('a dense series gains no extra points', power['sensor.load'].length, 120);
 
 if (failures.length) {
   console.log(`history.js: ${failures.length} of ${pass + failures.length} checks FAILED\n`);
