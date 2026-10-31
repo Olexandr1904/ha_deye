@@ -11,7 +11,7 @@
  * No external APIs. Local Home Assistant only.
  */
 
-import { log, warn, error } from './utils.js?v=1.2.2';
+import { log, warn, error } from './utils.js?v=1.2.3';
 
 export const STATUS = { CONNECTED: 'connected', CONNECTING: 'connecting', DISCONNECTED: 'disconnected' };
 

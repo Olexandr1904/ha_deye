@@ -4,6 +4,25 @@ All notable changes to this project. Versions are the `VERSION` constant in
 `deye-dashboard/js/config.js`, which is also the cache-busting query the panel is
 loaded with.
 
+## 1.2.3
+
+* A generator connected after you saved your entities now appears. Start-up
+  detection only ran when nothing at all was mapped, so a mapping saved before
+  1.1.0 never learned the generator roles: its kilowatts were missing from the
+  diagram and a power-balance warning appeared instead. Roles your saved mapping
+  has never heard of are now detected at start-up and offered for saving; a role
+  you cleared yourself stays cleared.
+* The grid is no longer credited with power it did not supply. Whatever the
+  measured sources could not explain was handed to the grid, so an unmapped
+  generator showed up as "Grid → Battery 5.20 kW" next to a grid reading 0 W.
+  The grid now covers at most what it imported; the rest stays unattributed and
+  the balance notice says so.
+* The settings dialog fits a phone. Its header and footer were single rows that
+  a 390 px screen could not hold, and the dialog clipped what did not fit — the
+  close button, the last tabs and, in Ukrainian, Save simply vanished. They now
+  wrap.
+* Change `?v=1.2.2` to `?v=1.2.3` in your `panel_custom` entry.
+
 ## 1.2.2
 
 * The top bar stays at the top of the screen again inside Home Assistant. It is

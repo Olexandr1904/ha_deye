@@ -11,7 +11,7 @@
 import { RANGE_KEYS } from './ranges.js';
 import { LANGUAGES } from './i18n.js';
 
-export const VERSION = '1.2.2';
+export const VERSION = '1.2.3';
 
 export const STORAGE_KEY = 'deye-dashboard:user-config:v1';
 export const LEARN_KEY = 'deye-dashboard:learned:v1';
@@ -305,6 +305,21 @@ export function mergeConfig(...layers) {
     else if (v !== null && typeof v !== 'string') out.entities[k] = null;
   }
   return out;
+}
+
+/**
+ * Roles that no configuration layer mentions at all: added by a version newer
+ * than the one that saved the mapping (the generator arrived in 1.1.0). A role
+ * stored as null was cleared by the user, so it is known, not new.
+ */
+export function unknownRoles(...layers) {
+  const known = new Set();
+  for (const layer of layers) {
+    if (layer && layer.entities && typeof layer.entities === 'object') {
+      for (const k of Object.keys(layer.entities)) known.add(k);
+    }
+  }
+  return ROLES.map((r) => r.key).filter((k) => !known.has(k));
 }
 
 export function loadUserConfig() {

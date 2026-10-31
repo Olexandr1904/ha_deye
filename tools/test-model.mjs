@@ -83,6 +83,20 @@ near('a known source still covers what it can', f.alloc.pvToLoad, 2);
 eq('the shortfall is not blamed on the grid', f.alloc.gridToLoad, null);
 near('the mix reports only what is known', f.mix.pv, 100);
 
+/* ── a measured grid is credited with no more than it imported ── */
+// A generator running but not mapped: 5.7 kW arrived from nowhere the panel
+// could see. The cascade handed all of it to the grid, which read 0 W, and
+// showed "Grid → Battery 5.20 kW" and an 80 % grid share of the house.
+f = computeFlow(state({ pv: 0.132, battery: 5.2, grid: 0, load: 0.655 }));
+near('solar still covers what it can', f.alloc.pvToLoad, 0.132);
+eq('a grid at 0 W supplies nothing to the house', f.alloc.gridToLoad, 0);
+eq('nor to the battery', f.alloc.gridToBattery, 0);
+eq('so it takes no share of the mix', f.mix.grid, 0);
+
+f = computeFlow(state({ pv: 0, battery: 2, grid: 1, load: 2 }));
+near('an import serves the house first', f.alloc.gridToLoad, 1);
+eq('and nothing is left of it for the battery', f.alloc.gridToBattery, 0);
+
 /* ── no load reading means no distribution at all ── */
 f = computeFlow(state({ pv: 4, battery: 1, grid: -3, load: null }));
 eq('without a load sensor nothing is distributed', f.alloc.pvToLoad, null);

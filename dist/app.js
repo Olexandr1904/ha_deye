@@ -5,21 +5,21 @@
  *   HA state_changed -> EntityManager -> EnergyModel -> PowerFlow -> DashboardRenderer
  */
 
-import { mergeConfig, loadUserConfig, saveUserConfig, VERSION, ROLE_BY_KEY } from './config.js?v=1.2.2';
-import { HAClient, STATUS } from './ha-client.js?v=1.2.2';
-import { DemoClient } from './demo.js?v=1.2.2';
-import { EntityManager } from './entity-manager.js?v=1.2.2';
-import { EnergyModel } from './energy-model.js?v=1.2.2';
-import { computeFlow } from './power-flow.js?v=1.2.2';
-import { DashboardRenderer } from './renderer.js?v=1.2.2';
-import { SettingsUI } from './settings-ui.js?v=1.2.2';
-import { DetailDialog } from './detail-dialog.js?v=1.2.2';
-import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.2.2';
-import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js?v=1.2.2';
-import { autoDetect } from './discovery.js?v=1.2.2';
-import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js?v=1.2.2';
-import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js?v=1.2.2';
-import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js?v=1.2.2';
+import { mergeConfig, unknownRoles, loadUserConfig, saveUserConfig, VERSION, ROLE_BY_KEY } from './config.js?v=1.2.3';
+import { HAClient, STATUS } from './ha-client.js?v=1.2.3';
+import { DemoClient } from './demo.js?v=1.2.3';
+import { EntityManager } from './entity-manager.js?v=1.2.3';
+import { EnergyModel } from './energy-model.js?v=1.2.3';
+import { computeFlow } from './power-flow.js?v=1.2.3';
+import { DashboardRenderer } from './renderer.js?v=1.2.3';
+import { SettingsUI } from './settings-ui.js?v=1.2.3';
+import { DetailDialog } from './detail-dialog.js?v=1.2.3';
+import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.2.3';
+import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js?v=1.2.3';
+import { autoDetect } from './discovery.js?v=1.2.3';
+import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js?v=1.2.3';
+import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js?v=1.2.3';
+import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js?v=1.2.3';
 
 const KEY_ROLES = ['pvPower', 'batterySoc', 'batteryPower', 'gridPower', 'loadPower'];
 const CHART_REFRESH_MS = 120000;
@@ -29,7 +29,10 @@ export class DeyeDashboard {
     this.root = root;                 // shadowRoot or a plain element
     this.opts = opts;
     this.panelConfig = opts.panelConfig || null;
-    this.config = mergeConfig(this.panelConfig, loadUserConfig());
+    const stored = loadUserConfig();
+    this.config = mergeConfig(this.panelConfig, stored);
+    // Roles this browser's saved mapping has never heard of, for _detectNewRoles.
+    this._unknownRoles = unknownRoles(this.panelConfig, stored);
     // URL flags for debugging and deep links:
     //   ?deye_debug=1 logs · ?deye_range=week range · ?deye_settings=1 open settings
     //   ?deye_noauto=1 skip entity auto-detection
@@ -136,6 +139,7 @@ export class DeyeDashboard {
 
     const mapped = this.entityManager.mappedCount;
     if (!mapped && !this.flags.noauto) this._tryAutoDetect();
+    else if (!this.flags.noauto) this._detectNewRoles();
 
     this.entityManager.start();
     this._applyUpdate();
@@ -160,6 +164,29 @@ export class DeyeDashboard {
 
     this.config = mergeConfig(this.config, { entities: mapping });
     this._autoDetected = { count: confident.length, prefix };
+    this.entityManager.setConfig(this.config);
+    this.model.setConfig(this.config);
+  }
+
+  /**
+   * A mapping saved by an older version has never heard of the roles added
+   * since, and start-up detection above only runs when nothing is mapped — so
+   * without this a generator connected later would never appear. Detect those
+   * roles only: a mapped role is kept, a cleared one stays cleared, and the
+   * result is offered for saving exactly as on a first run.
+   */
+  _detectNewRoles() {
+    if (!this._unknownRoles.length) return;
+    const states = this.client.getStates();
+    if (!Object.keys(states).length) return;
+    const { mapping, report, prefix } = autoDetect(states, { keepExisting: this.config.entities });
+    const confident = new Set(report.filter((r) => r.confidence === 'high' || r.confidence === 'medium').map((r) => r.role));
+    const found = Object.fromEntries(this._unknownRoles.filter((k) => mapping[k] && confident.has(k)).map((k) => [k, mapping[k]]));
+    const n = Object.keys(found).length;
+    log(`roles the saved mapping did not know: ${this._unknownRoles.length}, detected ${n}`);
+    if (!n) return;
+    this.config = mergeConfig(this.config, { entities: found });
+    this._autoDetected = { count: n, prefix };
     this.entityManager.setConfig(this.config);
     this.model.setConfig(this.config);
   }

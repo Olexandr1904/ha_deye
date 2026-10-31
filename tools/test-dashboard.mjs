@@ -719,6 +719,45 @@ try {
     document.scrollingElement.scrollTop = 0;
     return 1;`);
 
+  /* ─────────────── 7b. the settings dialog on a phone ─────────────── */
+  group('Settings dialog on a phone (390 px)');
+  // The dialog clips whatever does not fit (overflow: hidden), so a control
+  // past its edge is not scrolled to — it is simply gone. Ukrainian labels are
+  // the longer ones, and the status line after Auto-detect shares the footer.
+  const dialogFits = async (label) => {
+    const r = await page.eval(`${HELPERS}
+      const panel = q('.modal-panel').getBoundingClientRect();
+      const out = qa('.modal-head .tab-btn, .modal-head .icon-btn, .modal-foot .btn, .modal-foot .modal-status')
+        .filter((e) => e.getBoundingClientRect().width > 0)
+        .filter((e) => { const b = e.getBoundingClientRect(); return b.left < panel.left - 1 || b.right > panel.right + 1; })
+        .map((e) => { const b = e.getBoundingClientRect(); return (e.textContent.trim() || e.getAttribute('aria-label')) + ' ' + Math.round(b.left) + '→' + Math.round(b.right); });
+      return { out, panel: Math.round(panel.left) + '→' + Math.round(panel.right) };`);
+    check(`${label}: every tab and button is inside the dialog`, r.out.length === 0, r.out.join(', ') || `dialog ${r.panel}`);
+  };
+  // The language button saves the whole configuration, entities included; the
+  // onboarding group further down needs storage as it was, so it is put back.
+  const storedConfig = await page.eval(`return localStorage.getItem('deye-dashboard:user-config:v1');`);
+  for (const lang of ['EN', 'UA']) {
+    if (lang === 'UA') {
+      await page.eval(`${HELPERS} q('.lang-btn').click(); return 1;`);
+      await poll(page, `q('.lang-btn').textContent.trim() === 'UA'`, 5000);
+    }
+    await page.eval(`${HELPERS} q('.topbar .settings-btn').click(); return 1;`);
+    await poll(page, `!q('.modal').hidden`, 3000);
+    await dialogFits(`${lang}, as opened`);
+    await page.eval(`${HELPERS} qa('.modal-foot .btn')[0].click(); return 1;`);   // Auto-detect writes the status line
+    await poll(page, `q('.modal-foot .modal-status').textContent.trim() !== ''`, 3000);
+    await dialogFits(`${lang}, after Auto-detect`);
+    await page.eval(`${HELPERS} q('.modal').querySelector('.modal-foot .btn:not(.btn-ghost):not(.btn-primary)').click(); return 1;`);   // Cancel
+    await poll(page, `q('.modal').hidden`, 3000);
+  }
+  await page.eval(`${HELPERS} q('.lang-btn').click(); return 1;`);
+  await poll(page, `q('.lang-btn').textContent.trim() === 'EN'`, 5000);
+  await page.eval(`const before = ${JSON.stringify(storedConfig)};
+    if (before === null) localStorage.removeItem('deye-dashboard:user-config:v1');
+    else localStorage.setItem('deye-dashboard:user-config:v1', before);
+    return 1;`);
+
   /* ─────────────── 8. extreme values ─────────────── */
   group('Extreme values and broken data');
   await page.setViewport({ width: 1600, height: 1000 });
@@ -1020,6 +1059,43 @@ try {
   await page.screenshot(`${SHOT}-generator-narrow.png`);
   await page.setViewport({ width: 1600, height: 1000 });
   await sleep(900);
+
+  /* ─────────────── 13a. a mapping saved before a role existed ─────────────── */
+  group('A mapping saved before the generator roles existed');
+  // Roles added by a later version are absent from a mapping an older one
+  // saved. Start-up detection used to run only when nothing at all was mapped,
+  // so such a browser never got the generator: its kilowatts were missing from
+  // the diagram and a power-balance warning appeared instead.
+  const storedBeforeLegacy = await page.eval(`return localStorage.getItem('deye-dashboard:user-config:v1');`);
+  const reloadWith = async (shapeEntities) => {
+    await page.eval(`${HELPERS}
+      const entities = { ...app.config.entities };
+      (${shapeEntities})(entities);
+      localStorage.setItem('deye-dashboard:user-config:v1', JSON.stringify({ entities }));
+      return 1;`);
+    await page.goto(`${BASE}?demo=1&hour=20`);
+    await poll(page, `!!host.app && host.app._readyDone`, 8000);
+    await sleep(1500);
+    return page.eval(`${HELPERS} return {
+      power: app.config.entities.generatorPower,
+      nodeVisible: !q('.node-generator').hidden,
+      balance: app.state.meta.balance,
+    };`);
+  };
+  const legacy = await reloadWith(`(e) => { for (const k of Object.keys(e)) if (k.startsWith('generator')) delete e[k]; }`);
+  check('a role the saved mapping never had is detected at start-up', !!legacy.power && legacy.nodeVisible,
+    `generatorPower=${legacy.power}, node visible=${legacy.nodeVisible}`);
+  check('with it the power balance closes', legacy.balance !== null && Math.abs(legacy.balance) < 0.5,
+    `balance ${legacy.balance === null ? 'none' : legacy.balance.toFixed(2) + ' kW'}`);
+  const cleared = await reloadWith(`(e) => { e.generatorPower = null; }`);
+  check('a role the user cleared stays cleared', cleared.power === null, `generatorPower=${cleared.power}`);
+  await page.eval(`const before = ${JSON.stringify(storedBeforeLegacy)};
+    if (before === null) localStorage.removeItem('deye-dashboard:user-config:v1');
+    else localStorage.setItem('deye-dashboard:user-config:v1', before);
+    return 1;`);
+  await page.goto(`${BASE}?demo=1&hour=20`);
+  await poll(page, `!!host.app && host.app._readyDone`, 8000);
+  await sleep(1500);
 
   /* ─────────────── 14. sensor dialog ─────────────── */
   group('Sensor dialog');
