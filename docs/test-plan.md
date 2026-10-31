@@ -21,6 +21,7 @@ blind spot.
 | The power chart drew a ten-hour ramp for a generator that was off until 10:11 | The demo reports every sensor every few seconds, so no series ever had a gap; and nothing compared the drawn line with the state Home Assistant held in between. |
 | The flow beads stood still on every link | The animation checks read the animation's name and duration, which were right; nothing ever read the offset itself, which only jumped by one period — a picture identical to standing still. |
 | The sticky top bar scrolled away inside Home Assistant | Same blind spot, found one release later: the bar sticks within its nearest scroll container, which was the panel, and nothing ever scrolled and then looked at the bar. The standalone page now scrolls its document as Home Assistant does, so the two no longer differ. |
+| A healthy inverter showed FAULT | Alarm values were only ever text ("OK", fault codes). A `binary_sensor` of class `problem` at rest reads `off`, which was not on the list of quiet values. |
 
 Four lessons, and they shape everything below:
 

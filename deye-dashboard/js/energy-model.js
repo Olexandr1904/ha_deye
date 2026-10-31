@@ -300,7 +300,8 @@ export class EnergyModel {
         power: inverterPower,
         temperature: g('inverterTemperature'),
         statusText: invStatus,
-        alarm: alarm && !/^(0|none|no|ok|normal)$/i.test(alarm) ? alarm : null,
+        // "off" / "false": a binary_sensor of device_class "problem" at rest.
+        alarm: alarm && !/^(0|none|no|ok|normal|off|false)$/i.test(alarm) ? alarm : null,
         ratedPowerKw,
         efficiency: null,
         state: 'unknown',
