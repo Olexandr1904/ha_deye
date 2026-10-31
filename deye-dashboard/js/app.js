@@ -9,7 +9,7 @@ import { mergeConfig, unknownRoles, loadUserConfig, saveUserConfig, VERSION, ROL
 import { HAClient, STATUS } from './ha-client.js';
 import { DemoClient } from './demo.js';
 import { EntityManager } from './entity-manager.js';
-import { EnergyModel } from './energy-model.js';
+import { EnergyModel, GEN_RUNNING_KW, GEN_PRODUCED_KWH } from './energy-model.js';
 import { computeFlow } from './power-flow.js';
 import { DashboardRenderer } from './renderer.js';
 import { SettingsUI } from './settings-ui.js';
@@ -227,8 +227,10 @@ export class DeyeDashboard {
       consumption: live(st.load.today, 'consumption'),
       gridImport: live(st.grid.todayImport, 'gridImport'),
       gridExport: live(st.grid.todayExport, 'gridExport'),
-      // The tile is the day's energy: it stays after the generator stops.
-      generator: st.generator.present ? live(st.generator.today, 'generator') : null,
+      // The tile is the day's energy: it stays after the generator stops, and
+      // after an inverter whose clock runs ahead zeroed its counter before
+      // midnight — the day's statistics still hold what it produced.
+      generator: st.generator.present || isNum(p.generator) ? live(st.generator.today, 'generator') : null,
       batteryCharged: live(st.battery.chargeToday, 'batteryCharged'),
       batteryUsed: live(st.battery.dischargeToday, 'batteryUsed'),
       selfSufficiency: this.flow.selfSufficiency,
@@ -491,6 +493,9 @@ export class DeyeDashboard {
       }
       if (best) out[key] = best;
     }
+    // A generator that produced nothing in the period is not part of it: no
+    // series and no tile. One rule here, so the chart and the tile cannot part.
+    if (out.generator && !(out.generator.total > GEN_PRODUCED_KWH)) delete out.generator;
     return out;
   }
 
@@ -509,10 +514,12 @@ export class DeyeDashboard {
       this._chartBucket = null;
     }
     const ent = this.config.entities;
-    const withGen = !!(this.state && this.state.generator && this.state.generator.present);
+    // The generator is drawn when it ran in this period: not when it runs now,
+    // nor when today's counter says so. A past day is not today, and an inverter
+    // whose clock runs ahead zeroes that counter before midnight.
     const defs = [
       [ent.pvPower, 'pv', t('src.solar'), 'var(--solar-color)', { area: true, width: 2.2 }],
-      [withGen ? ent.generatorPower : null, 'generator', t('src.generator'), 'var(--generator-color)', {}],
+      [ent.generatorPower, 'generator', t('src.generator'), 'var(--generator-color)', { ifRan: true }],
       [ent.loadPower, 'load', t('src.house'), 'var(--load-color)', {}],
       [ent.batteryPower, 'battery', t('src.battery'), 'var(--battery-color)',
         { sign: this.model.batterySign === 'charge_positive' ? 1 : -1, signed: true }],
@@ -528,11 +535,11 @@ export class DeyeDashboard {
     const kinds = Object.fromEntries(ids.map((id) => [id, 'power']));
     const data = await fetchPowerSeries(this.client, ids, bounds.from, bounds.to, { kinds });
 
-    if (!ids.some((id) => (data[id] || []).length)) await this._explainEmptyChart(bounds, ids);
     const series = [];
     for (const [id, key, label, color, opts] of defs) {
       const pts = data[id];
       if (!pts || !pts.length) continue;
+      if (opts.ifRan && !pts.some(([, v]) => v > GEN_RUNNING_KW)) continue;
       const scaled = opts.sign ? pts.map(([ts, v]) => [ts, v * opts.sign]) : pts;
       const last = scaled[scaled.length - 1][1];
       series.push({
@@ -541,6 +548,9 @@ export class DeyeDashboard {
         summary: `${formatPower(last, { signed: opts.signed }).value} ${formatPower(last).unit}`,
       });
     }
+    // Nothing drawn, not nothing fetched: an idle generator's flat history is
+    // data, but no reason for an empty chart to go unexplained.
+    if (!series.length) await this._explainEmptyChart(bounds, ids);
     this.chart.setSeries(series);
   }
 
@@ -558,14 +568,13 @@ export class DeyeDashboard {
     this.chart.setRange(bounds.from, bounds.to);
     this.chart.setEmptyText(t('chart.noData'));
 
-    const withGen = !!(this.state && this.state.generator && this.state.generator.present);
     const defs = [
       ['solar', 'pv', t('src.solar'), 'var(--solar-color)'],
-      [withGen ? 'generator' : null, 'generator', t('src.generator'), 'var(--generator-color)'],
+      ['generator', 'generator', t('src.generator'), 'var(--generator-color)'],
       ['consumption', 'load', t('src.house'), 'var(--load-color)'],
       ['gridImport', 'import', t('series.import'), 'var(--grid-color)'],
       ['gridExport', 'export', t('series.export'), 'var(--battery-color)'],
-    ].filter(([key]) => key);
+    ];
 
     const series = [];
     for (const [srcKey, key, label, color] of defs) {
@@ -604,9 +613,8 @@ export class DeyeDashboard {
     for (const key of Object.keys(this._energySources())) {
       kpi[key] = this.energy[key] ? this.energy[key].total : null;
     }
-    // Same relevance rule as the live tiles: an installation whose generator
-    // sensors read zero should not grow a GENERATOR tile for every past period.
-    if (!isNum(kpi.generator) || kpi.generator <= 0.01) kpi.generator = null;
+    // An idle generator is already out of this.energy (_loadEnergyData), so an
+    // installation whose generator reads zero grows no GENERATOR tile.
     kpi.selfSufficiency = isNum(kpi.consumption) && kpi.consumption > 0 && isNum(kpi.gridImport)
       ? clamp(((kpi.consumption - kpi.gridImport) / kpi.consumption) * 100, 0, 100)
       : null;

@@ -327,6 +327,8 @@ try {
     const bounds = app.chart ? { from: app.chart.from, to: app.chart.to } : null;
     const series = app.chart && app.chart.series ? app.chart.series.map((sr) => ({
       key: sr.key, points: sr.points.length,
+      // A bucket with nothing in it draws no bar (a generator idle most days).
+      filled: sr.points.filter((p) => p[1] > 0).length,
       first: sr.points.length ? sr.points[0][0] : null,
       last: sr.points.length ? sr.points[sr.points.length - 1][0] : null,
       total: sr.points.reduce((a2, p) => a2 + p[1], 0),
@@ -357,6 +359,12 @@ try {
       mismatched.length
         ? mismatched.map(([t2, l]) => `${t2} ${p.tiles[t2]} vs ${l} ${p.legend[l]}`).join('; ')
         : pairs.map(([t2, l]) => `${l} ${Math.round(p.legend[l])}`).join(' '));
+    // The generator's tile and its series follow the same period total, so they
+    // come and go together (the chart once followed the live state instead).
+    const genTile = p.tiles.generator ?? null, genLegend = p.legend.Generator ?? null;
+    check(`${key}: the generator tile and the chart agree`,
+      genTile === null ? genLegend === null : closeEnough(genTile, genLegend),
+      `tile ${genTile}, legend ${genLegend}`);
 
     // 2. the legend total is the sum of the bars it drew
     const drift = p.series.filter((sr) => Math.abs(sr.total - (p.legend[{ pv: 'Solar', load: 'House', import: 'Import', export: 'Export', generator: 'Generator' }[sr.key]] ?? sr.total)) > Math.max(0.6, sr.total * 0.02));
@@ -370,7 +378,7 @@ try {
         : `${new Date(p.bounds.from).toISOString().slice(0, 10)} → ${new Date(p.bounds.to).toISOString().slice(0, 10)}`);
 
     // 4. bars are one per series per bucket that has data
-    const expectedBars = p.series.reduce((a2, sr) => a2 + sr.points, 0);
+    const expectedBars = p.series.reduce((a2, sr) => a2 + sr.filled, 0);
     check(`${key}: one bar per bucket per series`, p.bars === expectedBars, `${p.bars} bars, expected ${expectedBars}`);
 
     // 5. self-sufficiency follows from the two tiles it is derived from
@@ -557,6 +565,11 @@ try {
   check('forward navigation unblocked in the past', past.forwardBlocked === false);
   check('Now appears in the history banner', past.nowVisible === true);
   check('the top bar does not offer a second Now', await page.eval(`${HELPERS} return !q('.topbar .nav-now');`) === true);
+  // The demo generator ran 19:00-21:00 yesterday and is idle at 13:30 today:
+  // the chart follows the day on screen, not what the generator does now.
+  await poll(page, `!app._periodBusy`, 8000);
+  const pastSeries = await page.eval(`${HELPERS} return qa('.card-chart .chart-legend-item').map(e => e.textContent.trim());`);
+  check("yesterday's generator run is on yesterday's chart", pastSeries.some((l) => /Generator/.test(l)), pastSeries.join(' / '));
   await page.screenshot(`${SHOT}-history.png`);
 
   await page.eval(`${HELPERS} q('.history-now').click(); return 1;`);
@@ -1032,7 +1045,6 @@ try {
     balance: app.state.meta.balance,
     relevant: app.state.generator.relevant,
     links: qa('.flow-link:not([hidden])').length,
-    chartSeries: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
   };`);
   check('five-spoke layout with the generator',
     gen.layout === 'wideGen' && gen.nodeVisible && gen.relevant === true && gen.links === 5,
@@ -1056,7 +1068,9 @@ try {
     `export ${genAlloc.exportKw.toFixed(2)} kW = gen ${(genAlloc.alloc.generatorToGrid || 0).toFixed(2)} + pv ${(genAlloc.alloc.pvToGrid || 0).toFixed(2)} + batt ${(genAlloc.alloc.batteryToGrid || 0).toFixed(2)}`);
   check('balance still closes with the generator running', Math.abs(gen.balance) < 0.05,
     `delta=${gen.balance.toFixed(4)} kW`);
-  check('generator is a chart series too', gen.chartSeries.some((l) => /Generator/.test(l)), gen.chartSeries.join(' / '));
+  // Whether the chart draws it is decided by the period's own history, not by
+  // the live state: see "yesterday's generator run" and "the inverter's early
+  // reset" below. The demo's history ends at the real clock, not at ?hour=.
 
   const genGeo = await page.eval(`${HELPERS}
     const hub = rect('.node-inverter .inv-body');
@@ -1235,6 +1249,44 @@ try {
     return { runtime: rows.runtime.value.textContent.trim(), forecastShown: !rows.forecast.node.hidden };`);
   check('at the cut-off the card says so and drops the forecast', /^at the cut-off \(10 %\)$/.test(cutoff.runtime) && !cutoff.forecastShown,
     `${cutoff.runtime}, forecast shown: ${cutoff.forecastShown}`);
+
+  // An inverter whose clock runs an hour ahead zeroes its daily counters at
+  // 23:00. The generator that ran earlier today must stay on today's chart and
+  // tile: the period's history and statistics still hold it. The demo serves
+  // today's history up to the real clock, whatever ?hour= says, so the run is
+  // placed in the first minute of the day, where every clock has it.
+  const reset = await page.eval(`${HELPERS}
+    // The demo's tick would write its own counter back over the reset.
+    clearInterval(app.client._timer); app.client._tick = () => {};
+    const t0 = new Date().setHours(0, 0, 0, 0);
+    const callWS = app.client.callWS.bind(app.client);
+    app.client.callWS = async (msg) => {
+      const r = await callWS(msg);
+      const power = 'sensor.deye_generator_power', today = 'sensor.deye_generator_energy_today';
+      if (msg.type === 'history/history_during_period' && r[power]) {
+        r[power] = [{ s: '6000', lu: t0 / 1000 }, { s: '0', lu: t0 / 1000 + 20 }];
+      }
+      if (msg.type === 'recorder/statistics_during_period' && r[today]) {
+        r[today] = [{ start: t0, end: t0 + 3600000, change: 10.1 }];
+      }
+      return r;
+    };
+    app.client._set('sensor.deye_generator_energy_today', 0, 'kWh', 'energy', 'Deye generator energy today', 'total_increasing');
+    // A reload within the same minute would be answered from the history cache;
+    // applying the configuration clears it, as saving the settings does.
+    app.applyConfig(app.config);
+    const t1 = Date.now();
+    while ((app._periodBusy || app._periodQueued) && Date.now() - t1 < 8000) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      today: app.state.generator.today,
+      chart: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
+      tile: !q('.kpi[data-key="generator"]').hidden, tileValue: txt('.kpi[data-key="generator"] .kpi-num'),
+    };`);
+  check("after the inverter's early reset the generator is still on today's chart",
+    reset.today === 0 && reset.chart.some((l) => /Generator/.test(l)), `counter ${reset.today}; ${reset.chart.join(' / ')}`);
+  check("and its tile keeps the day's energy from the statistics", reset.tile && parseFloat(reset.tileValue) > 0,
+    `tile ${reset.tile}, ${reset.tileValue}`);
 
   // 10:00: the demo battery is half full and charging at about 6 kW (by 13:30
   // it is full and the charge has tapered to nothing).

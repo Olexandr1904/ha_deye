@@ -97,6 +97,10 @@ class SignLearner {
 
 /** How long a generator that stopped stays on the diagram (see build()). */
 const GEN_HOLD_MS = 2 * 60000;
+/** Above this a generator counts as running, kW. The chart applies it to history. */
+export const GEN_RUNNING_KW = 0.015;
+/** Above this a generator counts as having produced something, kWh: today, or in a period. */
+export const GEN_PRODUCED_KWH = 0.01;
 
 export class EnergyModel {
   constructor(config) {
@@ -190,13 +194,13 @@ export class EnergyModel {
     const generatorToday = g('generatorToday');
     // On the diagram while it runs. It leaves only after two minutes of nothing,
     // so a reading hovering around the threshold does not rebuild the diagram on
-    // every update. "Present" is what the KPI tile and the charts follow: it
-    // ran, or produced something, today.
-    const generatorRunning = isNum(generatorPower) && generatorPower > 0.015;
+    // every update. "Present" is what today's KPI tile follows: it ran, or
+    // produced something, today. The charts decide from the period's own data.
+    const generatorRunning = isNum(generatorPower) && generatorPower > GEN_RUNNING_KW;
     if (generatorRunning) this._genLastRunning = now;
     const generatorRelevant = generatorRunning
       || (this._genLastRunning !== null && now - this._genLastRunning < GEN_HOLD_MS);
-    const generatorPresent = generatorRelevant || (isNum(generatorToday) && generatorToday > 0.01);
+    const generatorPresent = generatorRelevant || (isNum(generatorToday) && generatorToday > GEN_PRODUCED_KWH);
 
     /* ── Load ── */
     // 'inverted' is for sensors that report consumption as a negative number.
@@ -292,7 +296,7 @@ export class EnergyModel {
         voltage: g('generatorVoltage'),
         status: txt('generatorStatus'),
         running: generatorRunning,
-        // "Relevant" drives the diagram and the card, "present" the tile and the charts.
+        // "Relevant" drives the diagram and the card, "present" today's tile.
         relevant: generatorRelevant,
         present: generatorPresent,
       },
