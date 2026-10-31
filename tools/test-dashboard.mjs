@@ -577,6 +577,22 @@ try {
   const back = await navState();
   check('Now returns to live', back.mode === 'live' && !back.banner && back.flowVisible, back.label);
 
+  // Statistics loaded for another period never pass for today's. Until today's
+  // arrive — or for good, if that load fails — the last period's are still in
+  // place: here, a day on which the generator ran and the house used 999 kWh.
+  await poll(page, `!app._periodBusy && !app._periodQueued`, 8000);
+  const stale = await page.eval(`${HELPERS}
+    app.periodKpi = { ...app.periodKpi, generator: 9, consumption: 999 };
+    app._periodKpiFrom -= 86400000;
+    app._lastChartFetch = Date.now();          // no reload may tidy it up meanwhile
+    app._applyUpdate();
+    await new Promise((r) => setTimeout(r, 300));
+    const out = { tile: !q('.kpi[data-key="generator"]').hidden, house: txt('.kpi[data-key="consumption"] .kpi-num') };
+    await app._loadPeriod(true);
+    return out;`);
+  check("another period's statistics never pass for today's", !stale.tile && parseFloat(stale.house) < 999,
+    `generator tile ${stale.tile}, house ${stale.house}`);
+
   await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'custom'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await sleep(900);
   await page.eval(`${HELPERS}

@@ -47,6 +47,7 @@ export class DeyeDashboard {
     this.energy = {};                  // per-quantity rows chosen for the selected period
     this.mode = 'live';
     this.periodKpi = null;
+    this._periodKpiFrom = null;        // the start of the period periodKpi belongs to
     this._lastChartFetch = 0;
     this._destroyed = false;
     this._scheduleUpdate = rafThrottle(() => this._applyUpdate());
@@ -219,8 +220,10 @@ export class DeyeDashboard {
     if (!usesLiveCounters(this.view)) return this.periodKpi;
     const st = this.state;
     // A daily register that never leaves zero is a known Deye quirk, so where
-    // statistics for the same quantity say otherwise, they win.
-    const p = this.periodKpi || {};
+    // statistics for the same quantity say otherwise, they win — but only
+    // today's: on the way back from another day its statistics would pass for
+    // today's until today's arrive, and for good if that load fails.
+    const p = this._periodKpiFrom === +periodBounds(this.view).from ? this.periodKpi || {} : {};
     const live = (value, key) => preferMovedCounter(value, p[key]);
     return {
       solar: live(st.pv.today, 'solar'),
@@ -619,6 +622,7 @@ export class DeyeDashboard {
       ? clamp(((kpi.consumption - kpi.gridImport) / kpi.consumption) * 100, 0, 100)
       : null;
     this.periodKpi = kpi;
+    this._periodKpiFrom = +bounds.from;
   }
 
   destroy() {
