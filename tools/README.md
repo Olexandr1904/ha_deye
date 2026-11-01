@@ -29,22 +29,23 @@ is in [docs/test-plan.md](../docs/test-plan.md).
 ./tools/run-tests.sh
 ```
 
-Runs the unit tests first (284 assertions, instantly, no browser), then serves
-`deye-dashboard/` over a static server, launches headless Chrome and runs 181
+Runs the unit tests first (361 assertions, instantly, no browser), then serves
+`deye-dashboard/` over a static server, launches headless Chrome and runs 225
 checks in a real browser. No dependencies: Node 22+ (for the global `WebSocket`)
 and an installed Chrome or Chromium — set `CHROME=/path/to/chrome` if it is not
 where the driver looks.
 
 | File | What it covers |
 |---|---|
-| `test-ranges.mjs` | 69 assertions on the calendar arithmetic in `js/ranges.js`: period bounds, Monday weeks, month lengths, DST, resolution choice, navigation clamping. A fixed `now` is threaded through every call, so the suite still passes next year and in any timezone. |
-| `test-config.mjs` | 42 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, that a merge never loses a pinned entity, which roles a saved mapping has never heard of, and that auto-detection finds the battery cut-off and the Solcast forecast among their real neighbours without letting any other role read a setpoint. |
-| `test-model.mjs` | 48 assertions on `js/power-flow.js` and the counter fallback: link directions, the load-coverage cascade, export attribution (including a generator exporting while the battery charges), that an unmeasured sensor is never treated as zero, and that the grid is credited with no more than it imported. |
-| `test-history.mjs` | 19 assertions on `js/history.js` against a stub Home Assistant, including the boundary defect that made a one-day period report two days of energy, the sum-diff baseline, unit normalisation, and that a power reading holds until it changes. |
-| `test-charts.mjs` | 28 assertions on the chart axes: a period's buckets are calendar-exact across DST, month lengths and leap years, a year always lays out twelve months whatever the data holds, and the time axis labels a month with dates rather than repeating one clock time. |
-| `test-runtime.mjs` | 45 assertions on `js/battery-runtime.js` and the model's use of it, with a real install's numbers: the energy above the inverter's cut-off, time on battery at the house's consumption, the run through the solar forecast (the cut-off time to the minute, the lowest point, the capacity cap, a half-hour already under way, a forecast that ends in the dark or has a hole, a battery already at the cut-off), Solcast's `detailedForecast` parsing, the ten-minute time-weighted consumption and what happens when the load sensor drops out, and the generator's two-minute hold on the diagram. |
+| `test-ranges.mjs` | 73 assertions on the calendar arithmetic in `js/ranges.js`: period bounds, Monday weeks, month lengths, DST, resolution choice, navigation clamping, and Today bringing any selection — a custom one too — back to the present. A fixed `now` is threaded through every call, so the suite still passes next year and in any timezone. |
+| `test-config.mjs` | 46 assertions on stored-configuration handling: the 1.0.2 → 1.1.0 migrations (`animations: true → 'auto'`, `today/7d/30d → day/week/month`), value validation, that a merge never loses a pinned entity, that an empty YAML section keeps the defaults, which roles a saved mapping has never heard of, and that auto-detection finds the battery cut-off and the Solcast forecast among their real neighbours without letting any other role read a setpoint. |
+| `test-model.mjs` | 79 assertions on `js/power-flow.js`, the counter fallback and the inverter's alarm: link directions, the load-coverage cascade, export attribution (including a generator exporting while the battery charges), that an unmeasured sensor is never treated as zero, and that the grid is credited with no more than it imported. |
+| `test-history.mjs` | 19 assertions on `js/history.js` against a stub Home Assistant, including the boundary defect that made a one-day period report two days of energy, the sum-diff baseline, unit normalisation, that a power reading holds until it changes, month buckets for a period that does not start or end on the 1st, a daily counter whose statistics have only a maximum, and that a failed request is reported rather than drawn as nothing. |
+| `test-charts.mjs` | 34 assertions on the chart axes: a period's buckets are calendar-exact across DST, month lengths and leap years, a year always lays out twelve months whatever the data holds, the time axis labels a month with dates rather than repeating one clock time, and a day's ticks start at local midnight in any timezone. |
+| `test-runtime.mjs` | 58 assertions on `js/battery-runtime.js` and the model's use of it, with a real install's numbers: the energy above the inverter's cut-off, time on battery at the house's consumption, the run through the solar forecast (the cut-off time to the minute, the lowest point, the capacity cap, a half-hour already under way, a forecast that ends in the dark or has a hole, a night the forecast does not reach, a battery already at the cut-off), Solcast's `detailedForecast` parsing, the ten-minute time-weighted consumption and what happens when the load sensor drops out or the tab was hidden, the cut-off with the output off, the time as the card prints it, the demo's forecast across a clock change, and the generator's two-minute hold on the diagram. |
+| `test-client.mjs` | 7 assertions on the standalone connection in `js/ha-client.js` against a scripted WebSocket: a socket closed before authentication fails the start-up instead of leaving it waiting, and only a connection that once worked is retried. |
 | `test-deploy.py` | 33 assertions on the YAML `deploy.py` writes, including the case that must never regress: a re-deploy without `--entities` keeps the mapping already on the host. |
-| `test-dashboard.mjs` | 208 checks in a real browser (below). |
+| `test-dashboard.mjs` | 225 checks in a real browser (below). |
 | `cdp.mjs` | A 300-line Chrome DevTools Protocol driver: launches the browser on a private profile, emulates devices (a real viewport width and DPR, which `--window-size` cannot give), clicks, reads the shadow DOM, takes screenshots, and collects console errors, exceptions **and** window errors. Kills the process group on exit and on Ctrl-C. |
 
 | Browser group | Examples |

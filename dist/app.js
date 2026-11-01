@@ -5,21 +5,21 @@
  *   HA state_changed -> EntityManager -> EnergyModel -> PowerFlow -> DashboardRenderer
  */
 
-import { mergeConfig, unknownRoles, loadUserConfig, saveUserConfig, VERSION, ROLE_BY_KEY } from './config.js?v=1.3.0';
-import { HAClient, STATUS } from './ha-client.js?v=1.3.0';
-import { DemoClient } from './demo.js?v=1.3.0';
-import { EntityManager } from './entity-manager.js?v=1.3.0';
-import { EnergyModel } from './energy-model.js?v=1.3.0';
-import { computeFlow } from './power-flow.js?v=1.3.0';
-import { DashboardRenderer } from './renderer.js?v=1.3.0';
-import { SettingsUI } from './settings-ui.js?v=1.3.0';
-import { DetailDialog } from './detail-dialog.js?v=1.3.0';
-import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.3.0';
-import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js?v=1.3.0';
-import { autoDetect } from './discovery.js?v=1.3.0';
-import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js?v=1.3.0';
-import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js?v=1.3.0';
-import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js?v=1.3.0';
+import { mergeConfig, unknownRoles, loadUserConfig, saveUserConfig, VERSION, ROLE_BY_KEY } from './config.js?v=1.3.1';
+import { HAClient, STATUS } from './ha-client.js?v=1.3.1';
+import { DemoClient } from './demo.js?v=1.3.1';
+import { EntityManager } from './entity-manager.js?v=1.3.1';
+import { EnergyModel, GEN_RUNNING_KW, GEN_PRODUCED_KWH } from './energy-model.js?v=1.3.1';
+import { computeFlow } from './power-flow.js?v=1.3.1';
+import { DashboardRenderer } from './renderer.js?v=1.3.1';
+import { SettingsUI } from './settings-ui.js?v=1.3.1';
+import { DetailDialog } from './detail-dialog.js?v=1.3.1';
+import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.3.1';
+import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js?v=1.3.1';
+import { autoDetect } from './discovery.js?v=1.3.1';
+import { defaultView, periodBounds, usesLiveCounters, startOfDay, toPresent } from './ranges.js?v=1.3.1';
+import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js?v=1.3.1';
+import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js?v=1.3.1';
 
 const KEY_ROLES = ['pvPower', 'batterySoc', 'batteryPower', 'gridPower', 'loadPower'];
 const CHART_REFRESH_MS = 120000;
@@ -47,6 +47,7 @@ export class DeyeDashboard {
     this.energy = {};                  // per-quantity rows chosen for the selected period
     this.mode = 'live';
     this.periodKpi = null;
+    this._periodKpiFrom = null;        // the start of the period periodKpi belongs to
     this._lastChartFetch = 0;
     this._destroyed = false;
     this._scheduleUpdate = rafThrottle(() => this._applyUpdate());
@@ -66,7 +67,7 @@ export class DeyeDashboard {
       showPhases: this.config.showPhases,
       onOpenSettings: () => this.settings.open('entities'),
       onViewChange: (v) => this.setView(v),
-      onNow: () => this.setView({ ...this.view, anchor: startOfDay(new Date()) }),
+      onNow: () => this.setView(toPresent(this.view)),
       onOpenDetail: (role) => this.detail.open(role),
       onToggleMenu: () => this.opts.onToggleMenu && this.opts.onToggleMenu(),
       onToggleLanguage: () => this.cycleLanguage(),
@@ -219,16 +220,20 @@ export class DeyeDashboard {
     if (!usesLiveCounters(this.view)) return this.periodKpi;
     const st = this.state;
     // A daily register that never leaves zero is a known Deye quirk, so where
-    // statistics for the same quantity say otherwise, they win.
-    const p = this.periodKpi || {};
+    // statistics for the same quantity say otherwise, they win — but only
+    // today's: on the way back from another day its statistics would pass for
+    // today's until today's arrive, and for good if that load fails.
+    const p = this._periodKpiFrom === +periodBounds(this.view).from ? this.periodKpi || {} : {};
     const live = (value, key) => preferMovedCounter(value, p[key]);
     return {
       solar: live(st.pv.today, 'solar'),
       consumption: live(st.load.today, 'consumption'),
       gridImport: live(st.grid.todayImport, 'gridImport'),
       gridExport: live(st.grid.todayExport, 'gridExport'),
-      // The tile is the day's energy: it stays after the generator stops.
-      generator: st.generator.present ? live(st.generator.today, 'generator') : null,
+      // The tile is the day's energy: it stays after the generator stops, and
+      // after an inverter whose clock runs ahead zeroed its counter before
+      // midnight — the day's statistics still hold what it produced.
+      generator: st.generator.present || isNum(p.generator) ? live(st.generator.today, 'generator') : null,
       batteryCharged: live(st.battery.chargeToday, 'batteryCharged'),
       batteryUsed: live(st.battery.dischargeToday, 'batteryUsed'),
       selfSufficiency: this.flow.selfSufficiency,
@@ -319,6 +324,7 @@ export class DeyeDashboard {
     this.entityManager.setConfig(this.config);
     this.model.setConfig(this.config);
     this.renderer.opts.showPhases = this.config.showPhases;
+    this.renderer.setTitle(this.config.title);
     clearHistoryCache();
     this._lastChartFetch = 0;
     this.renderer.setAnimations(this.config.animations);
@@ -343,10 +349,13 @@ export class DeyeDashboard {
   applyLanguage(code, { persist = false, reopenSettings = null } = {}) {
     const resolved = resolveLanguage(code, this._hassLanguage);
     this.config.language = code;
-    if (persist) saveUserConfig(this.config);
+    // The language only. The whole configuration in memory also holds what
+    // came from YAML and an auto-detected mapping nobody confirmed; stored, it
+    // would override configuration.yaml in this browser from then on.
+    if (persist) saveUserConfig({ ...(loadUserConfig() || {}), language: code });
     if (!setLanguage(resolved) && !reopenSettings) return;
     this._remount();
-    if (reopenSettings) this.settings.open(reopenSettings);
+    if (reopenSettings) this.settings.open(reopenSettings, { keepDraft: true });
     log('language:', resolved);
   }
 
@@ -491,6 +500,9 @@ export class DeyeDashboard {
       }
       if (best) out[key] = best;
     }
+    // A generator that produced nothing in the period is not part of it: no
+    // series and no tile. One rule here, so the chart and the tile cannot part.
+    if (out.generator && !(out.generator.total > GEN_PRODUCED_KWH)) delete out.generator;
     return out;
   }
 
@@ -509,10 +521,12 @@ export class DeyeDashboard {
       this._chartBucket = null;
     }
     const ent = this.config.entities;
-    const withGen = !!(this.state && this.state.generator && this.state.generator.present);
+    // The generator is drawn when it ran in this period: not when it runs now,
+    // nor when today's counter says so. A past day is not today, and an inverter
+    // whose clock runs ahead zeroes that counter before midnight.
     const defs = [
       [ent.pvPower, 'pv', t('src.solar'), 'var(--solar-color)', { area: true, width: 2.2 }],
-      [withGen ? ent.generatorPower : null, 'generator', t('src.generator'), 'var(--generator-color)', {}],
+      [ent.generatorPower, 'generator', t('src.generator'), 'var(--generator-color)', { ifRan: true }],
       [ent.loadPower, 'load', t('src.house'), 'var(--load-color)', {}],
       [ent.batteryPower, 'battery', t('src.battery'), 'var(--battery-color)',
         { sign: this.model.batterySign === 'charge_positive' ? 1 : -1, signed: true }],
@@ -528,11 +542,11 @@ export class DeyeDashboard {
     const kinds = Object.fromEntries(ids.map((id) => [id, 'power']));
     const data = await fetchPowerSeries(this.client, ids, bounds.from, bounds.to, { kinds });
 
-    if (!ids.some((id) => (data[id] || []).length)) await this._explainEmptyChart(bounds, ids);
     const series = [];
     for (const [id, key, label, color, opts] of defs) {
       const pts = data[id];
       if (!pts || !pts.length) continue;
+      if (opts.ifRan && !pts.some(([, v]) => v > GEN_RUNNING_KW)) continue;
       const scaled = opts.sign ? pts.map(([ts, v]) => [ts, v * opts.sign]) : pts;
       const last = scaled[scaled.length - 1][1];
       series.push({
@@ -541,6 +555,9 @@ export class DeyeDashboard {
         summary: `${formatPower(last, { signed: opts.signed }).value} ${formatPower(last).unit}`,
       });
     }
+    // Nothing drawn, not nothing fetched: an idle generator's flat history is
+    // data, but no reason for an empty chart to go unexplained.
+    if (!series.length) await this._explainEmptyChart(bounds, ids);
     this.chart.setSeries(series);
   }
 
@@ -558,14 +575,13 @@ export class DeyeDashboard {
     this.chart.setRange(bounds.from, bounds.to);
     this.chart.setEmptyText(t('chart.noData'));
 
-    const withGen = !!(this.state && this.state.generator && this.state.generator.present);
     const defs = [
       ['solar', 'pv', t('src.solar'), 'var(--solar-color)'],
-      [withGen ? 'generator' : null, 'generator', t('src.generator'), 'var(--generator-color)'],
+      ['generator', 'generator', t('src.generator'), 'var(--generator-color)'],
       ['consumption', 'load', t('src.house'), 'var(--load-color)'],
       ['gridImport', 'import', t('series.import'), 'var(--grid-color)'],
       ['gridExport', 'export', t('series.export'), 'var(--battery-color)'],
-    ].filter(([key]) => key);
+    ];
 
     const series = [];
     for (const [srcKey, key, label, color] of defs) {
@@ -604,13 +620,13 @@ export class DeyeDashboard {
     for (const key of Object.keys(this._energySources())) {
       kpi[key] = this.energy[key] ? this.energy[key].total : null;
     }
-    // Same relevance rule as the live tiles: an installation whose generator
-    // sensors read zero should not grow a GENERATOR tile for every past period.
-    if (!isNum(kpi.generator) || kpi.generator <= 0.01) kpi.generator = null;
+    // An idle generator is already out of this.energy (_loadEnergyData), so an
+    // installation whose generator reads zero grows no GENERATOR tile.
     kpi.selfSufficiency = isNum(kpi.consumption) && kpi.consumption > 0 && isNum(kpi.gridImport)
       ? clamp(((kpi.consumption - kpi.gridImport) / kpi.consumption) * 100, 0, 100)
       : null;
     this.periodKpi = kpi;
+    this._periodKpiFrom = +bounds.from;
   }
 
   destroy() {

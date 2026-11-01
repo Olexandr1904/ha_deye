@@ -12,13 +12,13 @@
  * title, a clock, a connection state and two icon buttons — on a phone as well.
  */
 
-import { h, setText, setAttr, toggleClass } from './utils.js?v=1.3.0';
-import { t, localeTag } from './i18n.js?v=1.3.0';
-import { icon } from './icons.js?v=1.3.0';
+import { h, setText, setAttr, toggleClass } from './utils.js?v=1.3.1';
+import { t, localeTag } from './i18n.js?v=1.3.1';
+import { icon } from './icons.js?v=1.3.1';
 import {
   RANGE_KEYS, periodLabel, shiftPeriod, canGoForward, withRange,
-  toDateInput, fromDateInput, startOfDay, addMonths, defaultView, isHistorical,
-} from './ranges.js?v=1.3.0';
+  toDateInput, fromDateInput, startOfDay, defaultView, isHistorical, toPresent,
+} from './ranges.js?v=1.3.1';
 
 /** A short month name in the interface language. */
 function monthShort(date) {
@@ -89,7 +89,7 @@ export class DateNav {
 
     this.todayBtn = h('button', {
       class: 'btn btn-ghost nav-now', type: 'button', text: t('nav.today'),
-      onclick: () => this._emit({ ...this.view, anchor: startOfDay(new Date()) }),
+      onclick: () => this._emit(toPresent(this.view)),
     });
 
     this.fromInput = h('input', {
@@ -142,11 +142,17 @@ export class DateNav {
     }
     if (!this.pop.hidden) { this._closePop(); return; }
     this.pop.innerHTML = '';
-    this.pop.appendChild(grid === 'month' ? this._monthGrid() : this._yearGrid());
+    this.pop.appendChild(grid === 'month' ? this._monthGrid(new Date(this.view.anchor).getFullYear()) : this._yearGrid());
     setAttr(this.pop, 'hidden', false);
     setAttr(this.labelBtn, 'aria-expanded', 'true');
     // One listener while open, removed on close: no global state left behind.
-    this._popAway = (ev) => { if (!this.pop.contains(ev.target) && ev.target !== this.labelBtn) this._closePop(); };
+    // The path, not the target: at the document a click from inside the shadow
+    // root is retargeted to the host, so every click — the year arrows too —
+    // looked like one outside the grid.
+    this._popAway = (ev) => {
+      const path = ev.composedPath();
+      if (!path.includes(this.pop) && !path.includes(this.labelBtn)) this._closePop();
+    };
     this._popKeys = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); this._closePop(); this.labelBtn.focus(); } };
     document.addEventListener('click', this._popAway, true);
     this.pop.addEventListener('keydown', this._popKeys);
@@ -162,30 +168,37 @@ export class DateNav {
     if (this._popKeys) { this.pop.removeEventListener('keydown', this._popKeys); this._popKeys = null; }
   }
 
-  /** Twelve months of one year, with a year stepper above them. */
-  _monthGrid() {
+  /**
+   * Twelve months of one year, with a year stepper above them. The year shown
+   * is the grid's own: browsing years selects nothing until a month is picked.
+   */
+  _monthGrid(year) {
     const now = new Date();
     const shown = new Date(this.view.anchor);
-    const year = shown.getFullYear();
+    const showYear = (y) => (e) => {
+      e.stopPropagation();
+      this.pop.innerHTML = '';
+      this.pop.appendChild(this._monthGrid(y));
+    };
     const head = h('div', { class: 'pop-head' },
       h('button', {
         class: 'icon-btn nav-btn', type: 'button', 'aria-label': t('nav.prev'),
         html: icon('chevronLeft', { size: 14 }),
-        onclick: (e) => { e.stopPropagation(); this.view = { ...this.view, anchor: addMonths(this.view.anchor, -12) }; this.pop.innerHTML = ''; this.pop.appendChild(this._monthGrid()); },
+        onclick: showYear(year - 1),
       }),
       h('span', { class: 'pop-title', text: String(year) }),
       h('button', {
         class: 'icon-btn nav-btn', type: 'button', 'aria-label': t('nav.next'),
         disabled: year >= now.getFullYear(),
         html: icon('chevronRight', { size: 14 }),
-        onclick: (e) => { e.stopPropagation(); this.view = { ...this.view, anchor: addMonths(this.view.anchor, 12) }; this.pop.innerHTML = ''; this.pop.appendChild(this._monthGrid()); },
+        onclick: showYear(year + 1),
       }));
     const grid = h('div', { class: 'pop-grid pop-months' });
     for (let m = 0; m < 12; m++) {
       const date = new Date(year, m, 1);
       const future = date > now;
       grid.appendChild(h('button', {
-        class: ['pop-cell', m === shown.getMonth() ? 'is-active' : ''],
+        class: ['pop-cell', year === shown.getFullYear() && m === shown.getMonth() ? 'is-active' : ''],
         type: 'button', disabled: future,
         text: monthShort(date),
         onclick: (e) => { e.stopPropagation(); this._closePop(); this._emit({ ...this.view, anchor: date }); },

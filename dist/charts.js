@@ -11,8 +11,8 @@
  * and redraw driven by a ResizeObserver.
  */
 
-import { h, s, niceTicks, monotonePath, clamp, fmtClock, fmtDayShort, fmtMonthShort, formatPower, formatEnergy, prefersReducedMotion } from './utils.js?v=1.3.0';
-import { t } from './i18n.js?v=1.3.0';
+import { h, s, niceTicks, monotonePath, clamp, fmtClock, fmtDayShort, fmtMonthShort, formatPower, formatEnergy, prefersReducedMotion } from './utils.js?v=1.3.1';
+import { t } from './i18n.js?v=1.3.1';
 
 const PAD = { top: 18, right: 14, bottom: 26, left: 46 };
 
@@ -422,7 +422,11 @@ function timeTicks(from, to, count) {
     for (; +d <= to; d.setDate(d.getDate() + days)) ticks.push(+d);
     return ticks;
   }
-  const first = Math.ceil(from / step) * step;
+  // Counted from local midnight, not from the UTC epoch: that grid lands on
+  // 02:00, 05:00 … in Kyiv and on the half hour in India.
+  const midnight = new Date(from);
+  midnight.setHours(0, 0, 0, 0);
+  const first = +midnight + Math.ceil((from - midnight) / step) * step;
   for (let t = first; t <= to; t += step) ticks.push(t);
   return ticks;
 }

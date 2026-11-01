@@ -11,8 +11,8 @@
  * never on a timer.
  */
 
-import { normalizeValue, log, warn, downsample } from './utils.js?v=1.3.0';
-import { t } from './i18n.js?v=1.3.0';
+import { normalizeValue, log, downsample } from './utils.js?v=1.3.1';
+import { t } from './i18n.js?v=1.3.1';
 
 const cache = new Map();
 const TTL_MS = 60000;
@@ -63,21 +63,17 @@ export async function fetchPowerSeries(client, entityIds, from, to, { kinds = {}
   const cached = fromCache(key, to);
   if (cached) return cached;
 
-  let raw;
-  try {
-    raw = await client.callWS({
-      type: 'history/history_during_period',
-      start_time: new Date(from).toISOString(),
-      end_time: new Date(to).toISOString(),
-      entity_ids: ids,
-      minimal_response: true,
-      no_attributes: true,
-      significant_changes_only: false,
-    });
-  } catch (e) {
-    warn('history/history_during_period is unavailable:', e && e.message);
-    return {};
-  }
+  // A failure is thrown, not returned as nothing: an empty answer would be
+  // explained to the user as history that has been purged.
+  const raw = await client.callWS({
+    type: 'history/history_during_period',
+    start_time: new Date(from).toISOString(),
+    end_time: new Date(to).toISOString(),
+    entity_ids: ids,
+    minimal_response: true,
+    no_attributes: true,
+    significant_changes_only: false,
+  });
 
   // Wider than the spacing downsampling leaves, so only real silences are held.
   const gapMs = Math.max(5 * 60000, (3 * (to - from)) / maxPoints);
@@ -142,15 +138,27 @@ async function statsWithFallback(client, ids, from, to, period, types) {
   try {
     return await requestStats(client, ids, from, to, period, types);
   } catch (e) {
-    // Older cores reject the `types` parameter outright.
-    try {
-      return await requestStats(client, ids, from, to, period, null);
-    } catch (e2) {
-      warn('recorder/statistics_during_period is unavailable:', e2 && e2.message);
-      return null;
-    }
+    // Older cores reject the `types` parameter outright. Anything else is
+    // thrown: returned as no data, it read as sensors without statistics.
+    return requestStats(client, ids, from, to, period, null);
   }
 }
+
+/**
+ * Home Assistant widens a month request to whole months and labels each
+ * bucket with its 1st, so a period that starts on the 17th, or ends on the 15th
+ * of a past month, cannot be answered in month buckets. Such a period is asked
+ * for in days and the days are added up per month.
+ */
+function monthAligned(from, to) {
+  const onFirst = (d) => { const x = new Date(d); return +x === +new Date(x.getFullYear(), x.getMonth(), 1); };
+  // A period running up to now has nothing after it to over-count.
+  return onFirst(from) && (onFirst(to) || +to >= Date.now() - 60000);
+}
+
+function monthKey(ts) { const d = new Date(ts); return +new Date(d.getFullYear(), d.getMonth(), 1); }
+
+function sameLocalDay(a, b) { return new Date(a).toDateString() === new Date(b).toDateString(); }
 
 /**
  * Whether a bucket belongs to the window that was asked for.
@@ -174,6 +182,20 @@ export async function fetchEnergyBars(client, statIds, from, to, period = 'day')
   const cached = fromCache(key, to);
   if (cached) return cached;
 
+  if (period === 'month' && !monthAligned(from, to)) {
+    const days = await fetchEnergyBars(client, ids, from, to, 'day');
+    const out = {};
+    for (const [statId, rows] of Object.entries(days)) {
+      const byMonth = new Map();
+      for (const r of rows) {
+        const k = monthKey(r.start);
+        byMonth.set(k, (byMonth.get(k) || 0) + r.value);
+      }
+      out[statId] = [...byMonth].map(([k, value]) => ({ start: new Date(k), value }));
+    }
+    return toCache(key, out);
+  }
+
   const raw = await statsWithFallback(client, ids, from, to, period, ['change', 'sum', 'max', 'state']);
   if (!raw) return {};
 
@@ -184,23 +206,33 @@ export async function fetchEnergyBars(client, statIds, from, to, period = 'day')
     const unit = (st && st.attributes && st.attributes.unit_of_measurement) || 'kWh';
     const series = [];
     let prevSum = null;
+    let prevMax = null, prevMaxTs = null;
     let dropped = 0;
     for (const r of rows) {
       const ts = typeof r.start === 'number' ? r.start : Date.parse(r.start);
+      const hasMax = r.max !== undefined && r.max !== null;
       // The baseline still has to advance through a bucket we do not keep,
       // otherwise a sum-diff would be taken against the wrong starting point.
       if (!inWindow(ts, from, to)) {
         if (r.sum !== undefined && r.sum !== null) prevSum = r.sum;
+        if (hasMax) { prevMax = r.max; prevMaxTs = ts; }
         dropped++;
         continue;
       }
       let v = null;
       if (r.change !== undefined && r.change !== null) v = r.change;
       else if (r.sum !== undefined && r.sum !== null) v = prevSum === null ? null : r.sum - prevSum;
-      else if (r.max !== undefined && r.max !== null) v = r.max;   // daily sensor that resets
+      else if (hasMax) {
+        // A daily counter recorded as a measurement has only a maximum. Over a
+        // day bucket that is the day's total; over an hour it is the running
+        // total so far, so within one day an hour is the step since the last.
+        const sinceLast = period === 'hour' && prevMax !== null && r.max >= prevMax && sameLocalDay(prevMaxTs, ts);
+        v = sinceLast ? r.max - prevMax : r.max;
+      }
       // Always advance the baseline: a response mixing `change` and `sum` rows
       // would otherwise diff against a stale one.
       if (r.sum !== undefined && r.sum !== null) prevSum = r.sum;
+      if (hasMax) { prevMax = r.max; prevMaxTs = ts; }
       if (v === null) continue;
       const n = normalizeValue('energy', v, unit);
       if (n.value === null) continue;
@@ -242,6 +274,18 @@ export async function fetchSensorStats(client, statId, from, to, period = 'day',
   const cached = fromCache(key, to);
   if (cached) return cached;
 
+  if (period === 'month' && !monthAligned(from, to)) {
+    // Days, folded into months: the mean of the daily means, the extremes of the days.
+    const byMonth = new Map();
+    for (const r of await fetchSensorStats(client, statId, from, to, 'day', kind)) {
+      const k = monthKey(r.start);
+      const m = byMonth.get(k);
+      if (!m) byMonth.set(k, { start: new Date(k), sum: r.mean, n: 1, min: r.min, max: r.max });
+      else { m.sum += r.mean; m.n++; m.min = Math.min(m.min, r.min); m.max = Math.max(m.max, r.max); }
+    }
+    return toCache(key, [...byMonth.values()].map((m) => ({ start: m.start, mean: m.sum / m.n, min: m.min, max: m.max })));
+  }
+
   const raw = await statsWithFallback(client, [statId], from, to, period, ['mean', 'min', 'max']);
   const rows = raw && raw[statId];
   if (!Array.isArray(rows)) return toCache(key, []);
@@ -275,6 +319,8 @@ export async function explainEmpty(client, entityIds, step) {
   const ids = (entityIds || []).filter(Boolean);
   if (!ids.length) return { text: t('chart.noData'), hint: '', reason: 'none' };
   const withStats = await listStatisticIds(client, ids);
+  // The list itself could not be read: no reason can be named honestly.
+  if (!withStats) return { text: t('detail.noDataPeriod'), hint: '', reason: 'unknown' };
   if (!withStats.length && step !== 'power') {
     return { text: t('detail.noHistory'), hint: t('detail.noHistoryHint'), reason: 'no-statistics' };
   }
@@ -285,22 +331,24 @@ export async function explainEmpty(client, entityIds, step) {
   return { text: t('detail.noDataPeriod'), hint: '', reason: 'no-data' };
 }
 
-/** Which of these entities have long-term statistics at all. */
+/** Which of these entities have long-term statistics at all; null when that is unknown. */
 export async function listStatisticIds(client, entityIds) {
   const all = await allStatisticIds(client);
-  return (entityIds || []).filter((id) => all.has(id));
+  return all ? (entityIds || []).filter((id) => all.has(id)) : null;
 }
 
 let statIdCache = null;
 
-/** The whole set of statistic ids, fetched once per session. */
+/** The whole set of statistic ids, fetched once per session; null when the list could not be read. */
 export async function allStatisticIds(client) {
   if (statIdCache) return statIdCache;
   try {
     const list = await client.callWS({ type: 'recorder/list_statistic_ids' });
     statIdCache = new Set((list || []).map((s) => s.statistic_id));
   } catch (e) {
-    return new Set();          // do not cache a failure: the next call retries
+    // Not an empty set: that would read as "no sensor has statistics". Not
+    // cached either, so the next call retries.
+    return null;
   }
   return statIdCache;
 }
