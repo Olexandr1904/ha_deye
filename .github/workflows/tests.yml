@@ -23,6 +23,7 @@ jobs:
           node tools/test-history.mjs
           node tools/test-charts.mjs
           node tools/test-runtime.mjs
+          node tools/test-client.mjs
       - name: Deployment YAML and import stamping
         run: python3 tools/test-deploy.py
       - name: dist/ matches the source
