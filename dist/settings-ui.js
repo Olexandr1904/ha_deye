@@ -6,11 +6,11 @@
  * configuration.yaml so it no longer depends on this browser's localStorage.
  */
 
-import { ROLES, GROUPS, ROLE_BY_KEY, VERSION, DEFAULT_CONFIG } from './config.js?v=1.3.0';
-import { autoDetect, candidatesFor, entityInfo, scoreCandidate } from './discovery.js?v=1.3.0';
-import { h, setText, setAttr, toggleClass, copyToClipboard, DASH, formatByKind, fmtClock } from './utils.js?v=1.3.0';
-import { t, LANGUAGES } from './i18n.js?v=1.3.0';
-import { icon } from './icons.js?v=1.3.0';
+import { ROLES, GROUPS, ROLE_BY_KEY, VERSION, DEFAULT_CONFIG } from './config.js?v=1.3.1';
+import { autoDetect, candidatesFor, entityInfo, scoreCandidate } from './discovery.js?v=1.3.1';
+import { h, setText, setAttr, toggleClass, copyToClipboard, DASH, formatByKind, fmtClock } from './utils.js?v=1.3.1';
+import { t, LANGUAGES } from './i18n.js?v=1.3.1';
+import { icon } from './icons.js?v=1.3.1';
 
 const DOMAINS = ['sensor.', 'binary_sensor.'];
 
@@ -37,18 +37,24 @@ export class SettingsUI {
     return this.el;
   }
 
-  open(tab = 'entities') {
-    this.draft = JSON.parse(JSON.stringify(this.getConfig()));
+  /**
+   * @param {object} [opts] keepDraft — reopen with the unsaved edits (after a
+   *   language change rebuilt the page) instead of the saved configuration
+   */
+  open(tab = 'entities', { keepDraft = false } = {}) {
+    if (!(keepDraft && this.draft)) this.draft = JSON.parse(JSON.stringify(this.getConfig()));
     this.el.innerHTML = '';
     this.el.appendChild(this._buildPanel(tab));
     setAttr(this.el, 'hidden', false);
+    // Reopening while open must not stack a second Escape listener.
+    if (this._keyHandler) document.removeEventListener('keydown', this._keyHandler);
     this._keyHandler = (e) => { if (e.key === 'Escape') this.close(); };
     document.addEventListener('keydown', this._keyHandler);
   }
 
   close() {
     setAttr(this.el, 'hidden', true);
-    if (this._keyHandler) document.removeEventListener('keydown', this._keyHandler);
+    if (this._keyHandler) { document.removeEventListener('keydown', this._keyHandler); this._keyHandler = null; }
   }
 
   get isOpen() { return this.el && !this.el.hidden; }

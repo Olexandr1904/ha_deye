@@ -37,18 +37,24 @@ export class SettingsUI {
     return this.el;
   }
 
-  open(tab = 'entities') {
-    this.draft = JSON.parse(JSON.stringify(this.getConfig()));
+  /**
+   * @param {object} [opts] keepDraft — reopen with the unsaved edits (after a
+   *   language change rebuilt the page) instead of the saved configuration
+   */
+  open(tab = 'entities', { keepDraft = false } = {}) {
+    if (!(keepDraft && this.draft)) this.draft = JSON.parse(JSON.stringify(this.getConfig()));
     this.el.innerHTML = '';
     this.el.appendChild(this._buildPanel(tab));
     setAttr(this.el, 'hidden', false);
+    // Reopening while open must not stack a second Escape listener.
+    if (this._keyHandler) document.removeEventListener('keydown', this._keyHandler);
     this._keyHandler = (e) => { if (e.key === 'Escape') this.close(); };
     document.addEventListener('keydown', this._keyHandler);
   }
 
   close() {
     setAttr(this.el, 'hidden', true);
-    if (this._keyHandler) document.removeEventListener('keydown', this._keyHandler);
+    if (this._keyHandler) { document.removeEventListener('keydown', this._keyHandler); this._keyHandler = null; }
   }
 
   get isOpen() { return this.el && !this.el.hidden; }

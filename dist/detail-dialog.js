@@ -8,14 +8,14 @@
  * instantaneous value over a month.
  */
 
-import { ROLE_BY_KEY } from './config.js?v=1.3.0';
-import { h, setText, setAttr, formatByKind, formatEnergy, isNum, DASH } from './utils.js?v=1.3.0';
-import { t } from './i18n.js?v=1.3.0';
-import { icon } from './icons.js?v=1.3.0';
-import { DateNav } from './date-nav.js?v=1.3.0';
-import { defaultView, periodBounds, toDateInput } from './ranges.js?v=1.3.0';
-import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.3.0';
-import { fetchPowerSeries, fetchEnergyBars, fetchSensorStats, explainEmpty } from './history.js?v=1.3.0';
+import { ROLE_BY_KEY } from './config.js?v=1.3.1';
+import { h, setText, setAttr, formatByKind, formatEnergy, isNum, DASH } from './utils.js?v=1.3.1';
+import { t } from './i18n.js?v=1.3.1';
+import { icon } from './icons.js?v=1.3.1';
+import { DateNav } from './date-nav.js?v=1.3.1';
+import { defaultView, periodBounds, toDateInput } from './ranges.js?v=1.3.1';
+import { TimeSeriesChart, DailyBarChart } from './charts.js?v=1.3.1';
+import { fetchPowerSeries, fetchEnergyBars, fetchSensorStats, explainEmpty } from './history.js?v=1.3.1';
 
 export class DetailDialog {
   constructor({ client, getConfig }) {
@@ -186,7 +186,8 @@ export class DetailDialog {
       });
       return undefined;
     } catch (e) {
-      if (!stale()) this._setEmpty(`<span>${t('detail.noDataPeriod')}</span>`);
+      // A failed request is not an empty period: say which it was.
+      if (!stale()) this._setEmpty(`<span>${t('chart.loadFailed')}</span>`);
       return undefined;
     } finally {
       if (!stale()) setAttr(this.spinner, 'hidden', true);
@@ -206,10 +207,14 @@ export class DetailDialog {
   _label() { return t(`role.${this.role.key}`, null, this.role.label); }
 
   /**
-   * The axis unit has to be the unit the values will actually be printed in:
-   * power and energy auto-scale, so a sub-kilowatt series must say W, not kW.
+   * The axis unit has to be the unit its numbers are printed in. The ticks are
+   * the values as they are — kW and kWh — so the unit is not the one the
+   * formatter would pick for the largest value (W under a kilowatt, MWh from a
+   * thousand kWh), which mislabelled 800 W as 0.8 W.
    */
   _unit(values = []) {
+    if (this.role.kind === 'power') return t('unit.kW');
+    if (this.role.kind === 'energy') return t('unit.kWh');
     const ref = values.length ? Math.max(...values.map((v) => Math.abs(v))) : 1;
     return formatByKind(this.role.kind, ref || 1).unit;
   }

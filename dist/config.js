@@ -8,10 +8,10 @@
  * better set them in configuration.yaml or through the gear icon in the UI.
  */
 
-import { RANGE_KEYS } from './ranges.js?v=1.3.0';
-import { LANGUAGES } from './i18n.js?v=1.3.0';
+import { RANGE_KEYS } from './ranges.js?v=1.3.1';
+import { LANGUAGES } from './i18n.js?v=1.3.1';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.3.1';
 
 export const STORAGE_KEY = 'deye-dashboard:user-config:v1';
 export const LEARN_KEY = 'deye-dashboard:learned:v1';
@@ -285,12 +285,15 @@ export const DEFAULT_CONFIG = {
 /** Merge configuration layers (one level of nesting deep). */
 export function mergeConfig(...layers) {
   const out = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
   for (const layer of layers) {
     if (!layer || typeof layer !== 'object') continue;
     for (const [k, v] of Object.entries(layer)) {
       if (v === undefined) continue;
-      if (v && typeof v === 'object' && !Array.isArray(v) && out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) {
-        Object.assign(out[k], v);
+      if (isObj(out[k])) {
+        // A section is merged, never replaced: `entities:` left empty in YAML is
+        // null, and a null or a plain value here would take the panel down.
+        if (isObj(v)) Object.assign(out[k], v);
       } else {
         out[k] = v;
       }

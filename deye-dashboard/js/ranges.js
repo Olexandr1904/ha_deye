@@ -172,6 +172,20 @@ export function shiftPeriod(view, delta) {
   return next;
 }
 
+/**
+ * The same kind of period, brought to the present — what "Today" does. A custom
+ * interval keeps its length and ends today: its ends are its own, so moving
+ * only its anchor would leave it where it was.
+ */
+export function toPresent(view, now = new Date()) {
+  const today = startOfDay(now);
+  if (view.range !== 'custom') return { ...view, anchor: today };
+  const from = startOfDay(view.customFrom || view.anchor);
+  const to = startOfDay(view.customTo || view.anchor);
+  const span = Math.max(0, Math.round((to - from) / DAY_MS));
+  return { ...view, customFrom: addDays(today, -span), customTo: today, anchor: today };
+}
+
 /** Can the selection move forward without landing in the future? */
 export function canGoForward(view, now = new Date()) {
   return periodEnd(view) <= now;

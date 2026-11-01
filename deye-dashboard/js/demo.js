@@ -201,7 +201,9 @@ export class DemoClient {
     const key = `${day.getTime()}`;
     this._forecasts = this._forecasts || {};
     if (!this._forecasts[key]) {
-      this._forecasts[key] = Array.from({ length: 48 }, (_, i) => {
+      // Up to the next local midnight: a clock-change day has 46 or 50 slots.
+      const next = new Date(day); next.setDate(next.getDate() + 1);
+      this._forecasts[key] = Array.from({ length: Math.round((next - day) / (30 * 60000)) }, (_, i) => {
         const start = new Date(day.getTime() + i * 30 * 60000);
         const pv = Math.round(simulate(new Date(start.getTime() + 15 * 60000), 50).pv * 1000) / 1000;
         return { period_start: start.toISOString(), pv_estimate: pv, pv_estimate10: Math.round(pv * 600) / 1000, pv_estimate90: Math.round(pv * 1200) / 1000 };

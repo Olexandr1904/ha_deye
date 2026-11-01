@@ -7,9 +7,9 @@
  * Updates are event-driven: subscribe to state_changed, recompute changed roles only.
  */
 
-import { ROLES, ROLE_BY_KEY } from './config.js?v=1.3.0';
-import { normalizeValue, rafThrottle, log, isNum } from './utils.js?v=1.3.0';
-import { parseForecastSlots } from './battery-runtime.js?v=1.3.0';
+import { ROLES, ROLE_BY_KEY } from './config.js?v=1.3.1';
+import { normalizeValue, rafThrottle, log, isNum } from './utils.js?v=1.3.1';
+import { parseForecastSlots } from './battery-runtime.js?v=1.3.1';
 
 const UNAVAILABLE = new Set(['unavailable', 'unknown', 'none', '', 'null']);
 

@@ -112,6 +112,19 @@ ok('no other role reads a setpoint',
   Object.entries(found).every(([k, v]) => k === 'batteryShutdownSoc' || !String(v || '').startsWith('number.')),
   JSON.stringify(Object.entries(found).filter(([k, v]) => k !== 'batteryShutdownSoc' && String(v || '').startsWith('number.'))));
 
+/* ── a YAML section left empty arrives as null ── */
+// `entities:` with every line under it commented out is null in YAML, and the
+// panel used to stop at start-up with "Cannot convert undefined or null to object".
+const tryMerge = (layer) => { try { return mergeConfig(layer); } catch (e) { return e.message; } };
+for (const key of ['entities', 'chart', 'powerDirection']) {
+  const out = tryMerge({ [key]: null });
+  ok(`an empty "${key}:" keeps the defaults`, typeof out === 'object' && JSON.stringify(out[key]) === JSON.stringify(DEFAULT_CONFIG[key]),
+    typeof out === 'string' ? out : JSON.stringify(out[key]));
+}
+const scalar = tryMerge({ entities: 'sensor.pv' });
+ok('a section given a plain value keeps the defaults', typeof scalar === 'object' && scalar.entities.pvPower === null,
+  typeof scalar === 'string' ? scalar : JSON.stringify(scalar.entities));
+
 /* ── role table sanity: the auto-detection depends on it ── */
 ok('every role has a unique key', new Set(ROLES.map((r) => r.key)).size === ROLES.length);
 ok('every role has a kind and a group', ROLES.every((r) => r.kind && r.group));

@@ -210,6 +210,9 @@
   transition: opacity .4s ease, color .3s;
   color: var(--text-0);
 }
+/* display: flex above would beat the hidden attribute: a layout without a
+   generator left that link's label as an empty pill in the corner. */
+.flow-label[hidden] { display: none; }
 .flow-label[data-align="left"] { transform: translate(14%, -50%); }
 .flow-label[data-align="right"] { transform: translate(-114%, -50%); }
 .flow-label[data-align="top"] { transform: translate(-50%, -168%); }

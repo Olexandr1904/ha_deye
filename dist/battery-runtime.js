@@ -15,7 +15,7 @@
  * below it the battery is not used, so it is not part of the answer.
  */
 
-import { isNum } from './utils.js?v=1.3.0';
+import { isNum } from './utils.js?v=1.3.1';
 
 const HOUR_MS = 3600000;
 const SLOT_MS = 30 * 60000;
@@ -45,9 +45,9 @@ export function runtimeHours(usable, loadKw) {
  * @returns {null | {reachesAt: number|null, minPct: number, minAt: number, open?: true, atCutoff?: true}}
  *   null when the forecast does not cover now. reachesAt is when the cut-off
  *   comes; otherwise minPct/minAt is the lowest point. `open` means the forecast
- *   ended (or broke off) while the battery was still draining, so the lowest
- *   point is only where the forecast stopped looking; `atCutoff` that the
- *   battery is there already.
+ *   ended (or broke off) while the battery was still draining — lower than ever,
+ *   or before the sun had ended any drain — so minPct/minAt is only where the
+ *   forecast stopped looking; `atCutoff` that the battery is there already.
  */
 export function forecastRuntime({ now, socPct, capacityKwh, reservePct = 0, loadKw, slots }) {
   if (!isNum(now) || !isNum(socPct) || !isNum(capacityKwh) || capacityKwh <= 0 || !isNum(loadKw) || !Array.isArray(slots)) return null;
@@ -57,7 +57,8 @@ export function forecastRuntime({ now, socPct, capacityKwh, reservePct = 0, load
 
   // The forecast has to say something about now: a list that starts later, or
   // ended earlier, would leave the time in between to guesswork.
-  const first = slots.findIndex(([start], i) => slotEnd(slots, i) > now);
+  const step = slotStep(slots);
+  const first = slots.findIndex(([start], i) => slotEnd(slots, i, step) > now);
   if (first < 0 || slots[first][0] > now) return null;
   if (energy <= reserve) return { reachesAt: now, minPct: socPct, minAt: now, atCutoff: true };
 
@@ -65,9 +66,12 @@ export function forecastRuntime({ now, socPct, capacityKwh, reservePct = 0, load
   let minAt = now;
   let lastNet = 0;
   let horizon = now;
+  // A drain the sun ended inside the forecast: its bottom is a real answer. A
+  // forecast that stops before any drain was ended has seen no night through.
+  let bridged = false;
   for (let i = first; i < slots.length; i++) {
     const [start, pv] = slots[i];
-    const end = slotEnd(slots, i);
+    const end = slotEnd(slots, i, step);
     if (!isNum(pv)) break;
     const from = Math.max(start, now);
     const hours = (end - from) / HOUR_MS;
@@ -76,6 +80,7 @@ export function forecastRuntime({ now, socPct, capacityKwh, reservePct = 0, load
       const reachesAt = from + ((energy - reserve) / -net) * HOUR_MS;
       return { reachesAt, minPct: reservePctSafe, minAt: reachesAt };
     }
+    if (lastNet < 0 && net >= 0) bridged = true;
     energy = Math.min(capacityKwh, energy + net * hours);
     if (energy < minEnergy) { minEnergy = energy; minAt = end; }
     lastNet = net;
@@ -83,29 +88,26 @@ export function forecastRuntime({ now, socPct, capacityKwh, reservePct = 0, load
     // A hole in the forecast ends it: whatever comes after is not continuous.
     if (i + 1 < slots.length && slots[i + 1][0] > end) break;
   }
-  const result = { reachesAt: null, minPct: (minEnergy / capacityKwh) * 100, minAt };
-  if (minAt === horizon && lastNet < 0) result.open = true;
-  return result;
+  if (lastNet < 0 && (minAt === horizon || !bridged)) {
+    return { reachesAt: null, minPct: (energy / capacityKwh) * 100, minAt: horizon, open: true };
+  }
+  return { reachesAt: null, minPct: (minEnergy / capacityKwh) * 100, minAt };
 }
 
 /** End of slot i: the next slot's start when it follows on, else one slot length. */
-function slotEnd(slots, i) {
-  const step = slotStep(slots);
+function slotEnd(slots, i, step) {
   const next = slots[i + 1];
   return next && next[0] <= slots[i][0] + step ? next[0] : slots[i][0] + step;
 }
 
 /** The forecast's own slot length: the smallest step between starts. */
 function slotStep(slots) {
-  if (slots._step) return slots._step;
   let step = Infinity;
   for (let i = 1; i < slots.length; i++) {
     const d = slots[i][0] - slots[i - 1][0];
     if (d > 0 && d < step) step = d;
   }
-  const value = Number.isFinite(step) ? step : SLOT_MS;
-  Object.defineProperty(slots, '_step', { value, enumerable: false });
-  return value;
+  return Number.isFinite(step) ? step : SLOT_MS;
 }
 
 /**
@@ -152,6 +154,9 @@ export class RollingMean {
     // The demo pins its clock with ?hour=, so every update arrives at the same
     // instant: replace, or the list would grow for as long as the page is open.
     if (last && t === last[0]) { last[1] = value; return; }
+    // Nothing arrived for longer than the window — a hidden tab is given no
+    // frames — so the last reading says nothing about the time in between.
+    if (last && t - last[0] > this.windowMs) this.samples = [];
     this.samples.push([t, value]);
     const from = t - this.windowMs;
     while (this.samples.length > 1 && this.samples[1][0] <= from) this.samples.shift();

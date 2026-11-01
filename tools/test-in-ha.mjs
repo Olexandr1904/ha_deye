@@ -350,15 +350,22 @@ try {
     kpi: q('.kpi[data-key="generator"]') ? !q('.kpi[data-key="generator"]').hidden : false,
     layout: q('.flow-stage').dataset.layout,
     power: app.state.generator.power, today: app.state.generator.today,
+    sinceRunning: app.model._genLastRunning === null ? null : app.state.meta.now - app.model._genLastRunning,
   };`);
-  // The diagram shows a running generator only; the tile keeps the day's energy.
+  // The diagram shows a running generator, and one that stopped less than two
+  // minutes ago; the tile keeps the day's energy.
   const producedToday = typeof generator.today === 'number' && generator.today > 0.01;
+  const running = typeof generator.power === 'number' && generator.power > 0.015;
+  const held = generator.sinceRunning !== null && generator.sinceRunning < 120000;
   check('the generator is on the diagram only while it runs',
-    generator.node === generator.relevant && generator.relevant === (typeof generator.power === 'number' && generator.power > 0.015),
-    `relevant=${generator.relevant}, node=${generator.node}, layout=${generator.layout}, ${generator.power} kW`);
+    generator.node === generator.relevant && generator.relevant === (running || held),
+    `relevant=${generator.relevant}, node=${generator.node}, layout=${generator.layout}, ${generator.power} kW, stopped ${generator.sinceRunning} ms ago`);
+  // Today's statistics count too: an inverter whose clock runs ahead zeroes its
+  // daily counter before midnight, and the energy the day produced stays.
+  const statsToday = await page.eval(`${HELPERS} return app.periodKpi ? app.periodKpi.generator : null;`);
   check("its tile shows whenever it has produced something today",
-    generator.kpi === (generator.relevant || producedToday),
-    `kpi=${generator.kpi}, ${generator.today} kWh today`);
+    generator.kpi === (generator.relevant || producedToday || typeof statsToday === 'number'),
+    `kpi=${generator.kpi}, ${generator.today} kWh today on the counter, ${statsToday} kWh in today's statistics`);
 
   group('Console');
   const errs = await page.windowErrors();

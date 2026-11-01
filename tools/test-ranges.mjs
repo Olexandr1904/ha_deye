@@ -148,6 +148,16 @@ eq('week label across two months', R.periodLabel(view('week', new Date(2026, 7, 
 eq('defaultView is today', iso(R.defaultView('day', NOW).anchor), '2026-08-22');
 eq('defaultView rejects an unknown range', R.defaultView('nonsense', NOW).range, 'day');
 
+/* ── "Today" brings any selection back to the present ── */
+// A custom interval's ends are its own, so moving its anchor moved nothing: the
+// button on a past custom range used to do nothing at all.
+const pastCustom = view('custom', new Date(2026, 7, 5), new Date(2026, 7, 1), new Date(2026, 7, 5));
+const present = R.toPresent(pastCustom, NOW);
+eq('a past custom range comes back to the present', R.periodBounds(present, NOW).includesNow, true);
+eq('keeping its length, ending today', [iso(present.customFrom), iso(present.customTo), present.range], ['2026-08-18', '2026-08-22', 'custom']);
+eq('a past week comes back to this week', iso(R.periodBounds(R.toPresent(view('week', new Date(2026, 6, 8)), NOW), NOW).from), '2026-08-17');
+eq('a past day comes back to today', iso(R.toPresent(view('day', new Date(2026, 6, 8)), NOW).anchor), '2026-08-22');
+
 if (failures.length) {
   console.log(`ranges.js: ${pass} passed, ${failures.length} FAILED\n`);
   failures.forEach((f) => console.log(`  x ${f}`));

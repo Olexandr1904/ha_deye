@@ -34,6 +34,7 @@ export class HAClient {
     this._retry = 0;
     this._closing = false;
     this._reconnectTimer = null;
+    this._everConnected = false;  // only a connection that once worked is retried
   }
 
   /* ─────────────────────────── shared API ─────────────────────────── */
@@ -176,7 +177,7 @@ export class HAClient {
       try {
         ws = new WebSocket(this._wsUrl());
       } catch (e) {
-        this._scheduleReconnect();
+        if (this._everConnected) this._scheduleReconnect();
         reject(e);
         return;
       }
@@ -200,6 +201,7 @@ export class HAClient {
         }
         if (msg.type === 'auth_ok') {
           authed = true;
+          this._everConnected = true;
           this._retry = 0;
           log('standalone WebSocket connected, HA', msg.ha_version);
           try {
@@ -236,7 +238,12 @@ export class HAClient {
         this._ws = null;
         for (const [, p] of this._pending) p.reject && p.reject(new Error('socket closed'));
         this._pending.clear();
-        if (!this._closing) {
+        // Closed before authentication: this attempt has its answer. Left
+        // unsettled, start-up waited forever and never showed the token form.
+        if (!authed) reject(new Error('Home Assistant closed the connection before authentication'));
+        // Retry a connection that worked before. One that never did goes back
+        // to the form, which retries when asked to.
+        if (!this._closing && this._everConnected) {
           this._setStatus(authed ? STATUS.CONNECTING : STATUS.DISCONNECTED);
           this._scheduleReconnect();
         } else {

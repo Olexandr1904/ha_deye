@@ -21,6 +21,11 @@ blind spot.
 | The power chart drew a ten-hour ramp for a generator that was off until 10:11 | The demo reports every sensor every few seconds, so no series ever had a gap; and nothing compared the drawn line with the state Home Assistant held in between. |
 | The flow beads stood still on every link | The animation checks read the animation's name and duration, which were right; nothing ever read the offset itself, which only jumped by one period — a picture identical to standing still. |
 | The sticky top bar scrolled away inside Home Assistant | Same blind spot, found one release later: the bar sticks within its nearest scroll container, which was the panel, and nothing ever scrolled and then looked at the bar. The standalone page now scrolls its document as Home Assistant does, so the two no longer differ. |
+| A generator that ran from 10:11 to 12:10 was missing from the day's chart | The chart drew the generator when the *live* state said so: running now, or today's counter above zero. The one check asserted it at 20:00 with the generator running, so the series was there — as a flat line, because the demo's history ends at the real clock and the run lay outside it. Nothing looked at a past day, or at today after the inverter, its clock an hour ahead, zeroed the counter at 23:09. |
+| A healthy inverter showed FAULT | Alarm values were only ever text ("OK", fault codes). A `binary_sensor` of class `problem` at rest reads `off`, which was not on the list of quiet values. |
+| A custom period from the 17th lost its whole first month | The demo widens month buckets to whole months as Home Assistant does, but every month-bucket period under test started on the 1st: a year. Only a custom range longer than 92 days uses month buckets with a ragged start. |
+| The year arrows in the month grid closed it and moved the period a year | The checks opened the grid and picked a month; nothing pressed the arrows. At the document a click from inside the shadow root comes from the host, so every click looked like one outside the grid. |
+| An empty generator label sat in the corner of every diagram without one | The label checks only measured labels that were `:not([hidden])` — which is exactly the one CSS had left on screen. |
 
 Four lessons, and they shape everything below:
 

@@ -16,6 +16,7 @@ node "$ROOT/tools/test-model.mjs"
 node "$ROOT/tools/test-history.mjs"
 node "$ROOT/tools/test-charts.mjs"
 node "$ROOT/tools/test-runtime.mjs"
+node "$ROOT/tools/test-client.mjs"
 python3 "$ROOT/tools/test-deploy.py"
 node "$ROOT/tools/build-dist.mjs" --check
 

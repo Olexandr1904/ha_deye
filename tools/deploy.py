@@ -181,7 +181,7 @@ def main() -> int:
     args = ap.parse_args()
 
     # A stale package is the one mistake this script must not make quietly.
-    build = subprocess.run([sys.executable and 'node', os.path.join(REPO, 'tools', 'build-dist.mjs'), '--check'],
+    build = subprocess.run(['node', os.path.join(REPO, 'tools', 'build-dist.mjs'), '--check'],
                            capture_output=True, text=True)
     if build.returncode != 0:
         print(build.stdout.strip() or build.stderr.strip(), file=sys.stderr)

@@ -188,8 +188,11 @@ export function fmtAgo(date) {
 export function fmtHours(hours) {
   if (!isNum(hours) || hours <= 0) return DASH;
   if (hours >= 48) return t('time.days', { v: Math.round(hours / 24) });
-  const hh = Math.floor(hours);
-  const mm = Math.round((hours - hh) * 60);
+  // Round the whole time to the minute first: rounding the minutes on their own
+  // turned 2.995 h into "2 h 60 min".
+  const total = Math.round(hours * 60);
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
   return hh ? t('time.hoursMinutes', { h: hh, m: String(mm).padStart(2, '0') }) : t('time.minutes', { m: mm });
 }
 

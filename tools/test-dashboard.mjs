@@ -327,6 +327,8 @@ try {
     const bounds = app.chart ? { from: app.chart.from, to: app.chart.to } : null;
     const series = app.chart && app.chart.series ? app.chart.series.map((sr) => ({
       key: sr.key, points: sr.points.length,
+      // A bucket with nothing in it draws no bar (a generator idle most days).
+      filled: sr.points.filter((p) => p[1] > 0).length,
       first: sr.points.length ? sr.points[0][0] : null,
       last: sr.points.length ? sr.points[sr.points.length - 1][0] : null,
       total: sr.points.reduce((a2, p) => a2 + p[1], 0),
@@ -357,6 +359,12 @@ try {
       mismatched.length
         ? mismatched.map(([t2, l]) => `${t2} ${p.tiles[t2]} vs ${l} ${p.legend[l]}`).join('; ')
         : pairs.map(([t2, l]) => `${l} ${Math.round(p.legend[l])}`).join(' '));
+    // The generator's tile and its series follow the same period total, so they
+    // come and go together (the chart once followed the live state instead).
+    const genTile = p.tiles.generator ?? null, genLegend = p.legend.Generator ?? null;
+    check(`${key}: the generator tile and the chart agree`,
+      genTile === null ? genLegend === null : closeEnough(genTile, genLegend),
+      `tile ${genTile}, legend ${genLegend}`);
 
     // 2. the legend total is the sum of the bars it drew
     const drift = p.series.filter((sr) => Math.abs(sr.total - (p.legend[{ pv: 'Solar', load: 'House', import: 'Import', export: 'Export', generator: 'Generator' }[sr.key]] ?? sr.total)) > Math.max(0.6, sr.total * 0.02));
@@ -370,7 +378,7 @@ try {
         : `${new Date(p.bounds.from).toISOString().slice(0, 10)} → ${new Date(p.bounds.to).toISOString().slice(0, 10)}`);
 
     // 4. bars are one per series per bucket that has data
-    const expectedBars = p.series.reduce((a2, sr) => a2 + sr.points, 0);
+    const expectedBars = p.series.reduce((a2, sr) => a2 + sr.filled, 0);
     check(`${key}: one bar per bucket per series`, p.bars === expectedBars, `${p.bars} bars, expected ${expectedBars}`);
 
     // 5. self-sufficiency follows from the two tiles it is derived from
@@ -557,12 +565,33 @@ try {
   check('forward navigation unblocked in the past', past.forwardBlocked === false);
   check('Now appears in the history banner', past.nowVisible === true);
   check('the top bar does not offer a second Now', await page.eval(`${HELPERS} return !q('.topbar .nav-now');`) === true);
+  // The demo generator ran 19:00-21:00 yesterday and is idle at 13:30 today:
+  // the chart follows the day on screen, not what the generator does now.
+  await poll(page, `!app._periodBusy`, 8000);
+  const pastSeries = await page.eval(`${HELPERS} return qa('.card-chart .chart-legend-item').map(e => e.textContent.trim());`);
+  check("yesterday's generator run is on yesterday's chart", pastSeries.some((l) => /Generator/.test(l)), pastSeries.join(' / '));
   await page.screenshot(`${SHOT}-history.png`);
 
   await page.eval(`${HELPERS} q('.history-now').click(); return 1;`);
   await poll(page, `q('.app').dataset.mode === 'live'`, 8000);
   const back = await navState();
   check('Now returns to live', back.mode === 'live' && !back.banner && back.flowVisible, back.label);
+
+  // Statistics loaded for another period never pass for today's. Until today's
+  // arrive — or for good, if that load fails — the last period's are still in
+  // place: here, a day on which the generator ran and the house used 999 kWh.
+  await poll(page, `!app._periodBusy && !app._periodQueued`, 8000);
+  const stale = await page.eval(`${HELPERS}
+    app.periodKpi = { ...app.periodKpi, generator: 9, consumption: 999 };
+    app._periodKpiFrom -= 86400000;
+    app._lastChartFetch = Date.now();          // no reload may tidy it up meanwhile
+    app._applyUpdate();
+    await new Promise((r) => setTimeout(r, 300));
+    const out = { tile: !q('.kpi[data-key="generator"]').hidden, house: txt('.kpi[data-key="consumption"] .kpi-num') };
+    await app._loadPeriod(true);
+    return out;`);
+  check("another period's statistics never pass for today's", !stale.tile && parseFloat(stale.house) < 999,
+    `generator tile ${stale.tile}, house ${stale.house}`);
 
   await page.eval(`${HELPERS} const sel = q('.topbar .nav-range-select'); sel.value = 'custom'; sel.dispatchEvent(new Event('change', { bubbles: true })); return 1;`);
   await sleep(900);
@@ -1032,7 +1061,6 @@ try {
     balance: app.state.meta.balance,
     relevant: app.state.generator.relevant,
     links: qa('.flow-link:not([hidden])').length,
-    chartSeries: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
   };`);
   check('five-spoke layout with the generator',
     gen.layout === 'wideGen' && gen.nodeVisible && gen.relevant === true && gen.links === 5,
@@ -1056,7 +1084,9 @@ try {
     `export ${genAlloc.exportKw.toFixed(2)} kW = gen ${(genAlloc.alloc.generatorToGrid || 0).toFixed(2)} + pv ${(genAlloc.alloc.pvToGrid || 0).toFixed(2)} + batt ${(genAlloc.alloc.batteryToGrid || 0).toFixed(2)}`);
   check('balance still closes with the generator running', Math.abs(gen.balance) < 0.05,
     `delta=${gen.balance.toFixed(4)} kW`);
-  check('generator is a chart series too', gen.chartSeries.some((l) => /Generator/.test(l)), gen.chartSeries.join(' / '));
+  // Whether the chart draws it is decided by the period's own history, not by
+  // the live state: see "yesterday's generator run" and "the inverter's early
+  // reset" below. The demo's history ends at the real clock, not at ?hour=.
 
   const genGeo = await page.eval(`${HELPERS}
     const hub = rect('.node-inverter .inv-body');
@@ -1236,6 +1266,44 @@ try {
   check('at the cut-off the card says so and drops the forecast', /^at the cut-off \(10 %\)$/.test(cutoff.runtime) && !cutoff.forecastShown,
     `${cutoff.runtime}, forecast shown: ${cutoff.forecastShown}`);
 
+  // An inverter whose clock runs an hour ahead zeroes its daily counters at
+  // 23:00. The generator that ran earlier today must stay on today's chart and
+  // tile: the period's history and statistics still hold it. The demo serves
+  // today's history up to the real clock, whatever ?hour= says, so the run is
+  // placed in the first minute of the day, where every clock has it.
+  const reset = await page.eval(`${HELPERS}
+    // The demo's tick would write its own counter back over the reset.
+    clearInterval(app.client._timer); app.client._tick = () => {};
+    const t0 = new Date().setHours(0, 0, 0, 0);
+    const callWS = app.client.callWS.bind(app.client);
+    app.client.callWS = async (msg) => {
+      const r = await callWS(msg);
+      const power = 'sensor.deye_generator_power', today = 'sensor.deye_generator_energy_today';
+      if (msg.type === 'history/history_during_period' && r[power]) {
+        r[power] = [{ s: '6000', lu: t0 / 1000 }, { s: '0', lu: t0 / 1000 + 20 }];
+      }
+      if (msg.type === 'recorder/statistics_during_period' && r[today]) {
+        r[today] = [{ start: t0, end: t0 + 3600000, change: 10.1 }];
+      }
+      return r;
+    };
+    app.client._set('sensor.deye_generator_energy_today', 0, 'kWh', 'energy', 'Deye generator energy today', 'total_increasing');
+    // A reload within the same minute would be answered from the history cache;
+    // applying the configuration clears it, as saving the settings does.
+    app.applyConfig(app.config);
+    const t1 = Date.now();
+    while ((app._periodBusy || app._periodQueued) && Date.now() - t1 < 8000) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      today: app.state.generator.today,
+      chart: qa('.card-chart .chart-legend-item').map(e => e.textContent.trim()),
+      tile: !q('.kpi[data-key="generator"]').hidden, tileValue: txt('.kpi[data-key="generator"] .kpi-num'),
+    };`);
+  check("after the inverter's early reset the generator is still on today's chart",
+    reset.today === 0 && reset.chart.some((l) => /Generator/.test(l)), `counter ${reset.today}; ${reset.chart.join(' / ')}`);
+  check("and its tile keeps the day's energy from the statistics", reset.tile && parseFloat(reset.tileValue) > 0,
+    `tile ${reset.tile}, ${reset.tileValue}`);
+
   // 10:00: the demo battery is half full and charging at about 6 kW (by 13:30
   // it is full and the charge has tapered to nothing).
   await page.goto(`${BASE}?demo=1&hour=10`);
@@ -1289,7 +1357,13 @@ try {
   check('dialog shows min/avg/max and a link to Home Assistant',
     rowDlg.stats.length === 3 && /history\?entity_id=/.test(rowDlg.link || ''), rowDlg.stats.join(' | '));
 
-  const band = await dialogRange('month');
+  await dialogRange('month');
+  // The month before, which is always complete: on the 1st the current month
+  // has a single day, and one bucket draws no band.
+  await page.eval(`${HELPERS} q('.detail-modal .nav-period > .nav-btn').click(); return 1;`);
+  await sleep(150);
+  await poll(page, dialogSettled, 9000);
+  const band = await readDialog();
   check('over a month an instantaneous sensor gets a mean line with a min-max band',
     band.bands === 1 && band.lines === 1, `bands ${band.bands}, lines ${band.lines}, ${band.stats.join(' | ')}`);
   await page.screenshot(`${SHOT}-dialog.png`);
@@ -1394,6 +1468,9 @@ try {
   await setAnim('off');
   let a = await animState();
   check('off disables the animation', a.attr === 'off' && parseFloat(a.dur) < 0.01, `${a.attr}, ${a.dur}`);
+  // Said explicitly: headless Chrome takes the host's setting, and a Mac with
+  // Reduce motion on would otherwise make this the reduce-motion case below.
+  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
   await setAnim('auto');
   a = await animState();
   check('auto animates when the system does not object', a.attr === 'auto' && parseFloat(a.dur) > 0.4, `${a.attr}, ${a.dur}`);
@@ -1407,6 +1484,149 @@ try {
   check('on animates even under reduce-motion', a.attr === 'on' && parseFloat(a.dur) > 0.4, `${a.attr}, ${a.dur}`);
   await page.send('Emulation.setEmulatedMedia', { features: [] });
   await setAnim('auto');
+
+  /* ─────────────── 15a. found in review ─────────────── */
+  group('Month grid, phone arrows, hidden labels, dialog units, settings, Today');
+  const storedBeforeReview = await page.eval(`return localStorage.getItem('deye-dashboard:user-config:v1');`);
+  // A real mouse click. element.click() from a script reaches a document
+  // listener with the same retargeting, but a pointer is what the bug was
+  // reported with, so that is what is used here.
+  const mouseClick = async (expr) => {
+    const p = await page.eval(`${HELPERS} const e = ${expr}; const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 };`);
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await page.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', clickCount: 1 });
+    }
+    await sleep(250);
+  };
+  const ready = async (url) => {
+    await page.goto(url);
+    await poll(page, `!!host.app && host.app._readyDone`, 8000);
+    await sleep(800);
+  };
+
+  await page.setViewport({ width: 1600, height: 1000 });
+  await ready(`${BASE}?demo=1&hour=13.5&deye_range=month`);
+  // `.flow-label` sets display: flex, which beat the hidden attribute: the
+  // generator's label sat as an empty pill in the corner of every diagram
+  // without a generator.
+  const ghost = await page.eval(`${HELPERS} const l = q('.flow-label.fl-generator');
+    return { layout: q('.flow-stage').dataset.layout, hidden: l.hidden, display: getComputedStyle(l).display };`);
+  check('a link label the layout has no place for is not drawn', ghost.layout === 'wide' && ghost.hidden && ghost.display === 'none',
+    JSON.stringify(ghost));
+
+  // The year arrows sit inside the month grid. The grid's close-on-outside
+  // listener is on the document, where a click inside the shadow root comes
+  // from the host: the arrows closed the grid and moved the period a year
+  // without showing it.
+  const thisYear = new Date().getFullYear();
+  await mouseClick(`q('.topbar .nav-label')`);
+  const labelBefore = await page.eval(`${HELPERS} return txt('.topbar .nav-label-text');`);
+  await mouseClick(`q('.topbar .pop-head .nav-btn')`);
+  const stepped = await page.eval(`${HELPERS} return { open: !q('.topbar .nav-pop').hidden, head: txt('.topbar .pop-title'), label: txt('.topbar .nav-label-text') };`);
+  check('the year arrow in the month grid steps the year and keeps the grid open',
+    stepped.open && stepped.head === String(thisYear - 1) && stepped.label === labelBefore, JSON.stringify(stepped));
+  await mouseClick(`qa('.topbar .pop-cell')[2]`);
+  await poll(page, `q('.topbar .nav-pop').hidden`, 3000);
+  const picked = await page.eval(`${HELPERS} return txt('.topbar .nav-label-text');`);
+  check('a month picked after stepping is in that year', /mar/i.test(picked) && picked.includes(String(thisYear - 1)), picked);
+  await mouseClick(`q('.topbar .nav-label')`);
+  await mouseClick(`q('.topbar .pop-head .nav-btn')`);
+  await mouseClick(`q('.brand-title-main')`);
+  const browsed = await page.eval(`${HELPERS} return { closed: q('.topbar .nav-pop').hidden, label: txt('.topbar .nav-label-text') };`);
+  check('browsing years and closing the grid changes nothing', browsed.closed && browsed.label === picked, JSON.stringify(browsed));
+  await mouseClick(`q('.topbar .nav-period > .nav-btn')`);
+  await sleep(300);
+  const stepBack = await page.eval(`${HELPERS} return txt('.topbar .nav-label-text');`);
+  check('and ‹ steps from the period on screen', /feb/i.test(stepBack) && stepBack.includes(String(thisYear - 1)), stepBack);
+
+  // Today on a past custom range: the interval's ends are its own, so moving
+  // its anchor moved nothing and the button did nothing.
+  await page.eval(`${HELPERS}
+    const d = (n) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - n); return x; };
+    app.setView({ range: 'custom', customFrom: d(30), customTo: d(26), anchor: d(26) }); return 1;`);
+  await poll(page, `app.mode === 'history' && !q('.history-bar').hidden`, 4000);
+  await mouseClick(`q('.history-now')`);
+  const customBack = await poll(page, `app.mode === 'live'`, 4000);
+  const customView = await page.eval(`${HELPERS} return { mode: app.mode, range: app.view.range };`);
+  check('Today on a past custom range comes back to the present', customBack === true, JSON.stringify(customView));
+
+  // Power and energy axes print kW and kWh numbers; a unit picked by the
+  // formatter (W under a kilowatt, MWh from a thousand kWh) did not match them.
+  await page.eval(`${HELPERS} app.detail.open('pvTotal'); return 1;`);
+  await poll(page, dialogSettled, 9000);
+  const dlgUnit = await page.eval(`${HELPERS} return {
+    unit: txt('.detail-modal .axis-unit'),
+    ticks: qa('.detail-modal .chart-grid .axis-label:not(.axis-unit)').map(e => e.textContent.trim()) };`);
+  check("the dialog's axis unit is the unit of its numbers", dlgUnit.unit === 'kWh', `${dlgUnit.unit} over ${dlgUnit.ticks.join(', ')}`);
+  await closeDialog();
+  await sleep(300);
+
+  // A language chosen in the settings rebuilds the page and reopens the dialog;
+  // reopening used to start the draft afresh, losing what had been typed.
+  const draftKept = await page.eval(`${HELPERS}
+    app.settings.open('entities');
+    await new Promise(r => setTimeout(r, 300));
+    const f = app.settings.fields.inverterTemperature.input;
+    f.value = 'sensor.typed_not_saved'; f.dispatchEvent(new Event('input', { bubbles: true }));
+    q('.modal .tab-btn[data-tab="options"]').click();
+    await new Promise(r => setTimeout(r, 200));
+    const before = app.config.language;
+    const pick = (code) => { const s = qa('.modal select').find(x => [...x.options].some(o => o.value === 'uk'));
+      s.value = code; s.dispatchEvent(new Event('change', { bubbles: true })); };
+    pick('uk');
+    await new Promise(r => setTimeout(r, 700));
+    const kept = app.settings.draft && app.settings.draft.entities.inverterTemperature;
+    const open = app.settings.isOpen;
+    pick(before);
+    await new Promise(r => setTimeout(r, 700));
+    app.settings.close();
+    return { kept, open };`);
+  check('a language changed in the settings keeps what was typed', draftKept.open && draftKept.kept === 'sensor.typed_not_saved',
+    JSON.stringify(draftKept));
+
+  // The title is an option like any other: it applies on Save.
+  const titled = await page.eval(`${HELPERS}
+    app.settings.open('options');
+    await new Promise(r => setTimeout(r, 300));
+    const field = qa('.modal .field').find(f => /title/i.test((f.querySelector('.field-label') || {}).textContent || ''));
+    const input = field.querySelector('input');
+    input.value = 'Home solar'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    q('.modal .modal-foot .btn-primary').click();
+    await new Promise(r => setTimeout(r, 600));
+    return txt('.brand-title-main');`);
+  check('a new dashboard title shows on Save', titled === 'Home solar', titled);
+
+  // The language button saves the language. Saving the whole configuration
+  // with it stored an auto-detected mapping the user never confirmed, and from
+  // then on that copy overrode configuration.yaml in this browser.
+  await page.eval(`localStorage.removeItem('deye-dashboard:user-config:v1'); return 1;`);
+  await ready(`${BASE}?demo=1&hour=13.5`);
+  await page.eval(`${HELPERS} q('.lang-btn').click(); return 1;`);
+  await poll(page, `q('.lang-btn').textContent.trim() === 'UA'`, 5000);
+  const savedLang = await page.eval(`return JSON.parse(localStorage.getItem('deye-dashboard:user-config:v1') || 'null');`);
+  check('the language button saves the language and nothing else',
+    !!savedLang && savedLang.language === 'uk' && !savedLang.entities, JSON.stringify(savedLang).slice(0, 140));
+
+  // On a phone with the generator running, the arrows have to follow the
+  // narrow geometry: the generator above, battery and grid below on the diagonals.
+  await page.eval(`const before = ${JSON.stringify(storedBeforeReview)};
+    if (before === null) localStorage.removeItem('deye-dashboard:user-config:v1');
+    else localStorage.setItem('deye-dashboard:user-config:v1', before);
+    return 1;`);
+  await ready(`${BASE}?demo=1&hour=20`);
+  await page.setViewport({ width: 390, height: 844, dpr: 3, mobile: true });
+  await poll(page, `q('.flow-stage').dataset.layout === 'narrowGen'`, 6000);
+  await sleep(600);
+  const arrows = await page.eval(`${HELPERS}
+    const want = { solar: { toHub: '↓', fromHub: '↑' }, generator: { toHub: '↙', fromHub: '↗' },
+      battery: { toHub: '↗', fromHub: '↙' }, grid: { toHub: '↖', fromHub: '↘' }, load: { toHub: '↑', fromHub: '↓' } };
+    return Object.entries(app.flow.links).filter(([, l]) => l.dir !== 'idle')
+      .map(([k, l]) => ({ k, got: q('.fl-' + k + ' .fl-arrow').textContent, want: want[k][l.dir] }));`);
+  check('on a phone with the generator every arrow points along its link',
+    arrows.length >= 3 && arrows.every((x) => x.got === x.want),
+    arrows.map((x) => `${x.k} ${x.got}${x.got === x.want ? '' : ` (want ${x.want})`}`).join(', '));
+  await page.setViewport({ width: 1600, height: 1000 });
+  await ready(`${BASE}?demo=1&hour=13.5`);
 
   /* ─────────────── 16. accessibility ─────────────── */
   group('Accessibility');

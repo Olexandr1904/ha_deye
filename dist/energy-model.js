@@ -11,14 +11,26 @@
  *   grid.power     > 0  — import   (energy comes FROM the grid)
  */
 
-import { LEARN_KEY } from './config.js?v=1.3.0';
-import { isNum, log, clamp } from './utils.js?v=1.3.0';
-import { num } from './entity-manager.js?v=1.3.0';
-import { usableKwh, runtimeHours, forecastRuntime, mergeSlots, RollingMean } from './battery-runtime.js?v=1.3.0';
+import { LEARN_KEY } from './config.js?v=1.3.1';
+import { isNum, log, clamp } from './utils.js?v=1.3.1';
+import { num } from './entity-manager.js?v=1.3.1';
+import { usableKwh, runtimeHours, forecastRuntime, mergeSlots, RollingMean } from './battery-runtime.js?v=1.3.1';
 
 const OFFLINE_WORDS = /(off|standby|stand_by|sleep|shutdown|stop|idle|disconnect|waiting)/i;
 const FAULT_WORDS = /(fault|error|alarm|fail)/i;
 const ONLINE_WORDS = /(normal|running|run|grid|generat|on_?grid|self|work|active|charg|discharg|bypass|eps|hybrid)/i;
+// "off" / "false": a binary_sensor of device_class "problem" at rest.
+const QUIET_ALARM = /^(none|no|ok|normal|off|false|no[ _-]?(alarm|fault|error)s?)$/i;
+
+/**
+ * An alarm text that says all is well. A text role passes the state through
+ * untouched, so a numeric register's zero may read "0.0". Number(), not
+ * parseFloat(): "0x0010" is a fault code, not zero.
+ */
+function quietAlarm(text) {
+  const s = text.trim();
+  return s === '' || QUIET_ALARM.test(s) || Number(s) === 0;
+}
 
 /* ───────────────────── polarity detection ───────────────────── */
 
@@ -97,6 +109,10 @@ class SignLearner {
 
 /** How long a generator that stopped stays on the diagram (see build()). */
 const GEN_HOLD_MS = 2 * 60000;
+/** Above this a generator counts as running, kW. The chart applies it to history. */
+export const GEN_RUNNING_KW = 0.015;
+/** Above this a generator counts as having produced something, kWh: today, or in a period. */
+export const GEN_PRODUCED_KWH = 0.01;
 
 export class EnergyModel {
   constructor(config) {
@@ -190,13 +206,13 @@ export class EnergyModel {
     const generatorToday = g('generatorToday');
     // On the diagram while it runs. It leaves only after two minutes of nothing,
     // so a reading hovering around the threshold does not rebuild the diagram on
-    // every update. "Present" is what the KPI tile and the charts follow: it
-    // ran, or produced something, today.
-    const generatorRunning = isNum(generatorPower) && generatorPower > 0.015;
+    // every update. "Present" is what today's KPI tile follows: it ran, or
+    // produced something, today. The charts decide from the period's own data.
+    const generatorRunning = isNum(generatorPower) && generatorPower > GEN_RUNNING_KW;
     if (generatorRunning) this._genLastRunning = now;
     const generatorRelevant = generatorRunning
       || (this._genLastRunning !== null && now - this._genLastRunning < GEN_HOLD_MS);
-    const generatorPresent = generatorRelevant || (isNum(generatorToday) && generatorToday > 0.01);
+    const generatorPresent = generatorRelevant || (isNum(generatorToday) && generatorToday > GEN_PRODUCED_KWH);
 
     /* ── Load ── */
     // 'inverted' is for sensors that report consumption as a negative number.
@@ -292,7 +308,7 @@ export class EnergyModel {
         voltage: g('generatorVoltage'),
         status: txt('generatorStatus'),
         running: generatorRunning,
-        // "Relevant" drives the diagram and the card, "present" the tile and the charts.
+        // "Relevant" drives the diagram and the card, "present" today's tile.
         relevant: generatorRelevant,
         present: generatorPresent,
       },
@@ -300,7 +316,7 @@ export class EnergyModel {
         power: inverterPower,
         temperature: g('inverterTemperature'),
         statusText: invStatus,
-        alarm: alarm && !/^(0|none|no|ok|normal)$/i.test(alarm) ? alarm : null,
+        alarm: alarm && !quietAlarm(alarm) ? alarm.trim() : null,
         ratedPowerKw,
         efficiency: null,
         state: 'unknown',
@@ -344,7 +360,11 @@ export class EnergyModel {
     const reservePct = isNum(cutoff) ? clamp(cutoff, 0, 100) : 0;
     const usable = usableKwh(capacity, soc, reservePct);
     const hours = runtimeHours(usable, loadKw);
-    if (isNum(hours)) state.battery.runtime = { hours, reservePct, loadKw, atCutoff: usable <= 0 };
+    // At the cut-off an off-grid inverter switches its output off, so the house
+    // reads nothing and there is no time to compute — yet that is the moment
+    // the card has to say so.
+    if (isNum(usable) && usable <= 0) state.battery.runtime = { hours: 0, reservePct, loadKw, atCutoff: true };
+    else if (isNum(hours)) state.battery.runtime = { hours, reservePct, loadKw, atCutoff: false };
     const slots = mergeSlots(
       values.pvForecastToday && values.pvForecastToday.forecast,
       values.pvForecastTomorrow && values.pvForecastTomorrow.forecast);

@@ -4,6 +4,67 @@ All notable changes to this project. Versions are the `VERSION` constant in
 `deye-dashboard/js/config.js`, which is also the cache-busting query the panel is
 loaded with.
 
+## 1.3.1
+
+* A healthy inverter no longer shows FAULT. An alarm sensor at rest — a
+  `binary_sensor` of class `problem` reading `off`, a register reading `0.0`,
+  a padded `" No fault "` — was taken for an alarm; hex fault codes still are
+  one.
+* The generator stays on the day's power chart after it stops, on past days,
+  and after an inverter whose clock runs ahead has zeroed its counters before
+  midnight: the chart draws it when it ran in that period, not when it runs
+  now. Week, month and year show it whenever the period had generator energy,
+  and the chart and the tile follow the same rule. This replaces the 1.3.0
+  rule that the tile and the charts followed the day's counter.
+* Coming back to today never shows another day's figures in today's tiles.
+* "With the solar forecast" no longer says "lasts" about a night the forecast
+  does not reach. With only today's forecast, at 10:00 in the sun, the card used
+  to read "lasts — lowest ≈ 30 % today at 10:00" although the battery was still
+  draining when the forecast stopped at midnight; it now says "forecast ends
+  tomorrow at 00:00 with ≈ 43 % left". A night the forecast does see through to
+  the sun is still the answer.
+* "On battery" no longer shows the consumption from before a tab was hidden.
+  A background tab is given no frames, so nothing was averaged while it was
+  hidden, and the reading from before stood for the whole hour: 0.3 kW at
+  18:00 read as 30 hours at 19:00 with the house drawing 3 kW.
+* At the cut-off with the inverter's output switched off (an off-grid inverter
+  at its shutdown SOC reads 0 W for the house) the card says "at the cut-off"
+  instead of nothing.
+* A time on battery that rounds up to the hour reads "3 h 00 min", not
+  "2 h 60 min".
+* The year arrows in the month grid step the year. They closed the grid and
+  silently moved the period a year, so ‹ then jumped to the year before.
+* On a phone with the generator running, every flow arrow points along its
+  link; the battery, the grid and the house had the desktop arrows.
+* No empty generator label sits in the corner of a diagram without a generator.
+* The sensor dialog labels its axis kW / kWh, the unit its numbers are in. It
+  said W under a kilowatt and MWh from a thousand kWh over kilowatt ticks.
+* A custom period longer than 92 days keeps its first month, and a past one
+  ending mid-month no longer counts the rest of that month: Home Assistant
+  widens month buckets to whole months, so such periods are now added up from
+  days. The sensor dialog's band chart had the same gap.
+* A daily energy counter recorded as a measurement (statistics with a maximum
+  but no sum) no longer reports a day as the sum of its running totals — a
+  12 kWh day read as 150 kWh, and won over the lifetime counter.
+* A request that fails says "The period could not be loaded" instead of
+  explaining an empty period — that the sensors had no long-term statistics, or
+  that the day's history had been purged.
+* Today on a past custom period comes back to the present, keeping its length.
+* Changing the language in the settings keeps what was typed but not saved.
+* The language button saves the language only. It saved the whole
+  configuration with it — including an auto-detected mapping that had not been
+  confirmed — and from then on that copy overrode `configuration.yaml` in that
+  browser.
+* The dashboard title from the settings shows on Save, not after a reload.
+* An empty section in the panel's YAML (`entities:` with every line commented
+  out) no longer stops the panel at start-up.
+* The day chart's hour ticks start at local midnight: 00:00, 03:00 … rather
+  than 02:00, 05:00 … in Kyiv (or 02:30 … in India).
+* Standalone (`index.html`): a Home Assistant that is down, or a mistyped
+  host, shows the connection form with an error instead of waiting forever.
+* `tools/build-dist.mjs` works from a path with spaces in it.
+* Change `?v=1.3.0` to `?v=1.3.1` in your `panel_custom` entry.
+
 ## 1.3.0
 
 * The battery card says how long the battery lasts: "On battery ≈ 19 h 56 min
