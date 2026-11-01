@@ -82,6 +82,18 @@ eq('inside a day the label is a clock', /^\d{2}:\d{2}$/.test(axisTimeLabel(new D
 eq('across a month the label is a date', /^\d{2}:\d{2}$/.test(axisTimeLabel(new Date(t0), 30 * DAY)), false);
 eq('across a year the label is a month', axisTimeLabel(new Date(t0), 300 * DAY).length <= 5, true);
 
+/* ── a day's ticks start at local midnight, whatever the offset ── */
+// Aligned to multiples of the step since the UTC epoch, a day in Kyiv was
+// labelled 02:00, 05:00 … and one in India 02:30, 05:30 ….
+for (const tz of ['Europe/Kyiv', 'Asia/Kolkata', 'America/New_York']) {
+  process.env.TZ = tz;
+  const midnight = +new Date(2026, 0, 15);
+  const ticks = timeTicks(midnight, midnight + DAY, 8);
+  const clocks = ticks.map((t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; });
+  eq(`${tz}: a day's ticks start at midnight`, clocks[0], '00:00');
+  eq(`${tz}: and fall on whole hours`, clocks.every((c) => c.endsWith(':00')), true);
+}
+
 if (failures.length) {
   console.log(`charts.js: ${failures.length} of ${pass + failures.length} checks FAILED\n`);
   for (const f of failures) console.log(`  ✗ ${f}`);

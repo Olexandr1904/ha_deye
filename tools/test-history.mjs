@@ -7,7 +7,7 @@
  * days of export as one day's. Nothing in the browser suite could see it — the
  * demo answered exactly, and the checks only counted bars.
  */
-import { fetchEnergyBars, fetchEnergyTotals, fetchSensorStats, fetchPowerSeries, clearHistoryCache } from '../deye-dashboard/js/history.js';
+import { fetchEnergyBars, fetchEnergyTotals, fetchSensorStats, fetchPowerSeries, clearHistoryCache, explainEmpty } from '../deye-dashboard/js/history.js';
 
 let pass = 0;
 const failures = [];
@@ -164,6 +164,106 @@ clearHistoryCache();
 const dense = Array.from({ length: 120 }, (_, i) => lu(at(10) + i * 5000, 500 + (i % 7) * 10));
 power = await fetchPowerSeries(histClient({ 'sensor.load': dense }), ['sensor.load'], new Date(at(10)), new Date(at(10) + 120 * 5000));
 eq('a dense series gains no extra points', power['sensor.load'].length, 120);
+
+/* ── month buckets for a period that does not start or end on the 1st ── */
+// Home Assistant widens a month request to whole months and labels each bucket
+// with its 1st. A custom 17 March – 30 June either lost all of March (its
+// bucket starts before the period) or, kept, would count 1–16 March as well.
+function wholePeriodClient(perDay) {
+  const calls = [];
+  return {
+    calls,
+    getState: () => ({ attributes: { unit_of_measurement: 'kWh' } }),
+    async callWS(msg) {
+      calls.push(msg);
+      if (msg.type !== 'recorder/statistics_during_period') return null;
+      const from = new Date(Date.parse(msg.start_time));
+      const to = new Date(Date.parse(msg.end_time));
+      const rows = [];
+      const sumDays = (a, b) => { let s = 0; for (const d = new Date(a); d < b; d.setDate(d.getDate() + 1)) s += perDay(d); return s; };
+      if (msg.period === 'month') {
+        const cursor = new Date(from.getFullYear(), from.getMonth(), 1);
+        for (; cursor <= to; cursor.setMonth(cursor.getMonth() + 1)) {
+          const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+          rows.push({ start: +cursor, change: sumDays(cursor, next) });
+        }
+      } else if (msg.period === 'day') {
+        const cursor = new Date(from); cursor.setHours(0, 0, 0, 0);
+        for (; cursor <= to; cursor.setDate(cursor.getDate() + 1)) rows.push({ start: +cursor, change: perDay(cursor) });
+      }
+      if ((msg.types || []).includes('mean')) for (const r of rows) Object.assign(r, { mean: 230, min: 221, max: 244 });
+      return { [msg.statistic_ids[0]]: rows };
+    },
+  };
+}
+const oneADay = () => 1;
+const monthsOf = (rows) => rows.map((r) => [r.start.getMonth() + 1, Math.round(r.value * 1000) / 1000]);
+clearHistoryCache();
+client = wholePeriodClient(oneADay);
+bars = await fetchEnergyBars(client, [ID], new Date(2026, 2, 17), new Date(2026, 6, 1), 'month');
+eq('a period from the 17th keeps its first month, from the 17th only', monthsOf(bars[ID] || []), [[3, 15], [4, 30], [5, 31], [6, 30]]);
+clearHistoryCache();
+client = wholePeriodClient(oneADay);
+bars = await fetchEnergyBars(client, [ID], new Date(2026, 3, 1), new Date(2026, 5, 16), 'month');
+eq('a past period ending on the 15th counts its last month to the 15th', monthsOf(bars[ID] || []), [[4, 30], [5, 31], [6, 15]]);
+clearHistoryCache();
+client = wholePeriodClient(oneADay);
+totals = await fetchEnergyTotals(client, [ID], new Date(2026, 2, 17), new Date(2026, 6, 1), 'month');
+near('and the total is the days of the period', totals[ID], 106);
+clearHistoryCache();
+client = wholePeriodClient(oneADay);
+bars = await fetchEnergyBars(client, [ID], new Date(2025, 0, 1), new Date(2026, 0, 1), 'month');
+eq('a calendar year still asks for month buckets', client.calls[0].period, 'month');
+near('and sums to its days', bars[ID].reduce((a, r) => a + r.value, 0), 365);
+clearHistoryCache();
+const monthBand = await fetchSensorStats(wholePeriodClient(oneADay), ID, new Date(2026, 2, 17), new Date(2026, 6, 1), 'month', 'voltage');
+eq("the sensor dialog's band keeps the first month too", monthBand.map((r) => [r.start.getMonth() + 1, r.mean, r.min, r.max]),
+  [[3, 230, 221, 244], [4, 230, 221, 244], [5, 230, 221, 244], [6, 230, 221, 244]]);
+
+/* ── a daily counter whose statistics only have a maximum ── */
+// A counter recorded as a measurement has max, not sum or change. Over a day
+// bucket its maximum is the day's total; over hourly buckets it is the running
+// total so far, and summing those reported a 12 kWh day as 150 kWh.
+const maxClient = {
+  getState: () => ({ attributes: { unit_of_measurement: 'kWh' } }),
+  async callWS(msg) {
+    if (msg.type !== 'recorder/statistics_during_period') return null;
+    const from = Date.parse(msg.start_time), to = Date.parse(msg.end_time);
+    const rows = [];
+    if (msg.period === 'hour') {
+      for (let t = from; t <= to; t += 3600000) rows.push({ start: t, max: 0.5 * (new Date(t).getHours() + 1) });
+    } else {
+      for (const d = new Date(from); +d <= to; d.setDate(d.getDate() + 1)) rows.push({ start: +d, max: 12 });
+    }
+    return { [ID]: rows };
+  },
+};
+clearHistoryCache();
+totals = await fetchEnergyTotals(maxClient, [ID], day(24), day(25), 'day');
+near('a day of hourly maxima totals the day, not the sum of running totals', totals[ID], 12);
+clearHistoryCache();
+totals = await fetchEnergyTotals(maxClient, [ID], day(24), day(26), 'day');
+near('and the counter starting again at midnight starts the next day afresh', totals[ID], 24);
+clearHistoryCache();
+bars = await fetchEnergyBars(maxClient, [ID], day(17), day(24), 'day');
+eq('a day bucket of a daily counter is its maximum', bars[ID].map((r) => r.value), [12, 12, 12, 12, 12, 12, 12]);
+
+/* ── a failure is a failure, not an empty period ── */
+// Turned into "no data", a dropped request made the card say the sensors had
+// no long-term statistics, or that the day's history had been purged.
+const brokenClient = {
+  getState: () => null,
+  async callWS() { throw new Error('socket not open'); },
+};
+const rejects = async (fn) => { try { await fn(); return false; } catch (e) { return true; } };
+clearHistoryCache();
+eq('a failed history request is reported, not drawn as nothing',
+  await rejects(() => fetchPowerSeries(brokenClient, ['sensor.load'], new Date(at(0)), new Date(at(11)))), true);
+eq('a failed statistics request is reported too',
+  await rejects(() => fetchEnergyBars(brokenClient, [ID], day(17), day(24), 'day')), true);
+clearHistoryCache();
+const why = await explainEmpty(brokenClient, [ID], 'day');
+eq('an unknown answer does not claim the sensor has no statistics', why.reason !== 'no-statistics', true);
 
 if (failures.length) {
   console.log(`history.js: ${failures.length} of ${pass + failures.length} checks FAILED\n`);

@@ -186,7 +186,8 @@ export class DetailDialog {
       });
       return undefined;
     } catch (e) {
-      if (!stale()) this._setEmpty(`<span>${t('detail.noDataPeriod')}</span>`);
+      // A failed request is not an empty period: say which it was.
+      if (!stale()) this._setEmpty(`<span>${t('chart.loadFailed')}</span>`);
       return undefined;
     } finally {
       if (!stale()) setAttr(this.spinner, 'hidden', true);
