@@ -344,7 +344,11 @@ export class EnergyModel {
     const reservePct = isNum(cutoff) ? clamp(cutoff, 0, 100) : 0;
     const usable = usableKwh(capacity, soc, reservePct);
     const hours = runtimeHours(usable, loadKw);
-    if (isNum(hours)) state.battery.runtime = { hours, reservePct, loadKw, atCutoff: usable <= 0 };
+    // At the cut-off an off-grid inverter switches its output off, so the house
+    // reads nothing and there is no time to compute — yet that is the moment
+    // the card has to say so.
+    if (isNum(usable) && usable <= 0) state.battery.runtime = { hours: 0, reservePct, loadKw, atCutoff: true };
+    else if (isNum(hours)) state.battery.runtime = { hours, reservePct, loadKw, atCutoff: false };
     const slots = mergeSlots(
       values.pvForecastToday && values.pvForecastToday.forecast,
       values.pvForecastTomorrow && values.pvForecastTomorrow.forecast);

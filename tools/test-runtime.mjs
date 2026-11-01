@@ -10,6 +10,8 @@
 import { usableKwh, runtimeHours, forecastRuntime, parseForecastSlots, mergeSlots, RollingMean } from '../deye-dashboard/js/battery-runtime.js';
 import { EnergyModel } from '../deye-dashboard/js/energy-model.js';
 import { mergeConfig } from '../deye-dashboard/js/config.js';
+import { fmtHours } from '../deye-dashboard/js/utils.js';
+import { DemoClient } from '../deye-dashboard/js/demo.js';
 
 let pass = 0;
 const failures = [];
@@ -24,7 +26,9 @@ const near = (name, actual, expected, tol = 0.01) => eq(
 
 const CAP = 11.2, RESERVE = 10, LOAD = 0.5;
 const MIN = 60000, HOUR = 3600000;
-const at = (d, h, m = 0) => +new Date(2026, 9, d, h, m, 0, 0);
+// Minutes may be fractional (04:43.2 is 04:43:12): the Date constructor would
+// truncate them, so they are added in milliseconds.
+const at = (d, h, m = 0) => +new Date(2026, 9, d, h, 0, 0, 0) + m * MIN;
 /** Half-hour forecast slots [startMs, kW] from `from` for `count` slots. */
 const slots = (from, count, kw) => Array.from({ length: count }, (_, i) => [from + i * 30 * MIN, typeof kw === 'function' ? kw(i) : kw]);
 
@@ -89,6 +93,23 @@ eq('a forecast that starts after now is no answer',
 f = forecastRuntime({ now: at(31, 22), socPct: 40, capacityKwh: CAP, reservePct: RESERVE, loadKw: LOAD,
   slots: [[at(31, 22), 0], [at(31, 23, 30), 5], [at(31, 24), 5]] });
 eq('a hole in the forecast ends it there', f && [f.open, f.minAt], [true, at(31, 22, 30)]);
+// Only today's forecast, at 10:00 in the sun: the battery fills, then drains
+// from 16:00 and is still draining when the forecast stops at midnight. Its
+// lowest point is now, but "lasts — lowest 30 % at 10:00" would promise a night
+// the forecast never saw: 11.2 kWh less 8 h at 0.8 kW is 4.8 kWh, 42.9 %.
+f = forecastRuntime({ now: at(31, 10), socPct: 30, capacityKwh: CAP, reservePct: RESERVE, loadKw: 0.8,
+  slots: slots(at(31, 0), 48, (i) => (i >= 20 && i < 32 ? 4 : 0)) });
+eq('a night the forecast does not reach is open-ended, even above an earlier low', f && [f.reachesAt, f.open], [null, true]);
+near('with the battery where the forecast ends', f && f.minPct, 42.86, 0.05);
+eq('at the end of the forecast', f && f.minAt, at(32, 0));
+// The same afternoon dip after a night already bridged changes nothing: the
+// answer is the night, and the forecast saw all of it.
+f = forecastRuntime({ now: at(31, 12, 30), socPct: 99, capacityKwh: CAP, reservePct: RESERVE, loadKw: LOAD,
+  slots: [...day, ...slots(at(32, 11), 4, 0)] });
+eq('a bridged night stays the answer when the forecast ends in a dip', f && [f.reachesAt, f.open, f.minAt], [null, undefined, at(32, 7)]);
+near('with the night\'s lowest point', f && f.minPct, 28.46, 0.05);
+eq('a frozen forecast is read, not written to',
+  (() => { try { return !!forecastRuntime({ now: at(31, 22), socPct: 40, capacityKwh: CAP, reservePct: RESERVE, loadKw: LOAD, slots: Object.freeze(evening.slice()) }); } catch (e) { return e.message; } })(), true);
 
 /* ── at the cut-off already ── */
 f = forecastRuntime({ now: at(31, 22), socPct: 5, capacityKwh: CAP, reservePct: RESERVE, loadKw: LOAD, slots: evening });
@@ -116,15 +137,22 @@ const avg = new RollingMean(10 * MIN);
 avg.push(0, 0.3);
 avg.push(5 * MIN, 0.9);
 near('five minutes at 0.3 and five at 0.9 average 0.6', avg.mean(10 * MIN), 0.6, 1e-9);
-avg.push(20 * MIN, 0.1);
-near('only the last ten minutes count', avg.mean(20 * MIN), 0.9, 1e-9);
-near('and the newest reading weighs by how long it has held', avg.mean(25 * MIN), 0.5, 1e-9);
+avg.push(15 * MIN, 0.1);
+near('only the last ten minutes count', avg.mean(15 * MIN), 0.9, 1e-9);
+near('and the newest reading weighs by how long it has held', avg.mean(20 * MIN), 0.5, 1e-9);
 eq('an empty average is no answer', new RollingMean(10 * MIN).mean(0), null);
 const pinned = new RollingMean(10 * MIN);
 for (let i = 0; i < 500; i++) pinned.push(0, 0.4 + i / 10000);
 eq('readings at one instant replace each other instead of piling up', pinned.samples.length, 1);
 const single = new RollingMean(10 * MIN); single.push(0, 0.42);
 near('one reading is its own average', single.mean(0), 0.42, 1e-9);
+// A hidden tab is given no frames, so nothing is pushed while it is hidden.
+// Shown again an hour later, the reading from before says nothing about the
+// hour in between: 0.3 kW at 18:00 must not stand for the 3 kW drawn at 19:00.
+const hidden = new RollingMean(10 * MIN);
+hidden.push(0, 0.3);
+hidden.push(60 * MIN, 3.0);
+near('after a gap longer than the window the old reading is dropped', hidden.mean(60 * MIN), 3.0, 1e-9);
 
 /* ── the model: time on battery and the generator, through build() ── */
 const model = new EnergyModel(mergeConfig(null, {}));
@@ -141,6 +169,10 @@ st = model.build(v({ ...base, loadPower: 0.3 }), { now: at(31, 22, 3) });
 near('a settings change starts the average afresh', st.battery.runtime && st.battery.runtime.loadKw, 0.3, 1e-9);
 st = model.build(v({ ...base, batterySoc: 10 }), { now: at(31, 22, 4) });
 eq('at the cut-off the card says so', st.battery.runtime && st.battery.runtime.atCutoff, true);
+// An off-grid inverter at its shutdown SOC switches its output off: the house
+// reads 0 W, and that is exactly when "at the cut-off" has to show.
+st = new EnergyModel(mergeConfig(null, {})).build(v({ ...base, batterySoc: 9, loadPower: 0 }), { now: at(31, 22) });
+eq('at the cut-off with the output off the card still says so', st.battery.runtime && st.battery.runtime.atCutoff, true);
 const gen = new EnergyModel(mergeConfig(null, {}));
 const g = (power, today, now) => gen.build(v({ ...base, generatorPower: power, generatorToday: today }), { now }).generator;
 eq('a running generator is on the diagram', g(4.5, 1, at(31, 19)).relevant, true);
@@ -149,9 +181,30 @@ eq('two minutes of nothing does', g(0, 1, at(31, 19, 3.5)).relevant, false);
 eq("but the day's energy keeps it present for the tile and the charts", g(0, 1, at(31, 19, 4)).present, true);
 eq('a generator that never ran today is not present', new EnergyModel(mergeConfig(null, {})).build(v({ ...base, generatorPower: 0, generatorToday: 0 }), { now: at(31, 12) }).generator.present, false);
 
+/* ── the time on battery as the card prints it ── */
+// Minutes rounded on their own used to turn 2.995 h into "2 h 60 min".
+eq('a time that rounds up to the hour carries into it', fmtHours(2.995), '3 h 00 min');
+eq('an ordinary time reads as hours and minutes', fmtHours(19.936), '19 h 56 min');
+eq('under an hour it is minutes', fmtHours(0.5), '30 min');
+
+/* ── the demo's forecast across the autumn clock change ── */
+// 25 October 2026 has 25 hours in Kyiv. Forty-eight half-hour slots from
+// midnight stop at 23:00, an hour short of tomorrow's first slot, and the
+// forecast reads that hour as a hole.
+process.env.TZ = 'Europe/Kyiv';
+const demo = new DemoClient();
+demo._now = () => new Date(2026, 9, 25, 12, 0, 0, 0);
+const today = demo._forecast(0), tomorrow = demo._forecast(1);
+eq("the day's last slot ends where tomorrow's first begins",
+  Date.parse(today[today.length - 1].period_start) + 30 * MIN, Date.parse(tomorrow[0].period_start));
+eq('a 25-hour day has fifty half-hour slots', today.length, 50);
+
 if (failures.length) {
   console.log(`battery-runtime.js: ${failures.length} of ${pass + failures.length} checks FAILED\n`);
   for (const x of failures) console.log(`  ✗ ${x}`);
   process.exit(1);
 }
 console.log(`battery-runtime.js: all ${pass} checks passed`);
+// EnergyModel.build() schedules its learned-polarity save five seconds out; a
+// unit test has no reason to wait for it.
+process.exit(0);
