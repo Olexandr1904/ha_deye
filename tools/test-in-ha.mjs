@@ -360,9 +360,12 @@ try {
   check('the generator is on the diagram only while it runs',
     generator.node === generator.relevant && generator.relevant === (running || held),
     `relevant=${generator.relevant}, node=${generator.node}, layout=${generator.layout}, ${generator.power} kW, stopped ${generator.sinceRunning} ms ago`);
+  // Today's statistics count too: an inverter whose clock runs ahead zeroes its
+  // daily counter before midnight, and the energy the day produced stays.
+  const statsToday = await page.eval(`${HELPERS} return app.periodKpi ? app.periodKpi.generator : null;`);
   check("its tile shows whenever it has produced something today",
-    generator.kpi === (generator.relevant || producedToday),
-    `kpi=${generator.kpi}, ${generator.today} kWh today`);
+    generator.kpi === (generator.relevant || producedToday || typeof statsToday === 'number'),
+    `kpi=${generator.kpi}, ${generator.today} kWh today on the counter, ${statsToday} kWh in today's statistics`);
 
   group('Console');
   const errs = await page.windowErrors();

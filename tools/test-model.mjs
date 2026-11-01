@@ -7,6 +7,8 @@
  */
 import { computeFlow } from '../deye-dashboard/js/power-flow.js';
 import { preferMovedCounter } from '../deye-dashboard/js/utils.js';
+import { EnergyModel } from '../deye-dashboard/js/energy-model.js';
+import { mergeConfig } from '../deye-dashboard/js/config.js';
 
 let pass = 0;
 const failures = [];
@@ -116,9 +118,27 @@ eq('both missing stays missing', preferMovedCounter(null, null), null);
 eq('the daily counter wins when it is larger', preferMovedCounter(12, 9), 12);
 eq('a non-number is not a value', preferMovedCounter(undefined, NaN), null);
 
+/* ── the inverter's alarm ── */
+// A binary_sensor of device_class "problem" (e.g. "Inverter Has Faults") reads
+// "off" when all is well; that once lit a FAULT badge over a healthy inverter.
+const inverter = (alarm) => new EnergyModel(mergeConfig(null, {})).build({
+  inverterAlarm: { value: alarm }, inverterStatus: { value: 'Normal' }, loadPower: { value: 0.3 },
+}).inverter;
+// A text role passes the state through untouched, so a numeric register reads
+// "0.0" and a padded or spelled-out "all clear" has to be quiet as well.
+for (const quiet of ['off', 'OFF', 'false', 'OK', ' OK ', 'Normal', '0', '0.0', '00', 'none', 'No fault', 'no_alarm', 'No errors']) {
+  eq(`alarm "${quiet}" is no alarm`, inverter(quiet).alarm, null);
+  eq(`and the inverter is not at fault with "${quiet}"`, inverter(quiet).state, 'online');
+}
+eq('a raised binary alarm is a fault', inverter('on').state, 'fault');
+eq('a fault code is a fault', inverter('F13 Grid mode changed').state, 'fault');
+eq('a numeric fault code is a fault', inverter('64').state, 'fault');
+eq('a hex fault code is a fault, though parseFloat reads it as 0', inverter('0x0010').state, 'fault');
+eq('the alarm is shown without its padding', inverter(' F13 ').alarm, 'F13');
+
 if (failures.length) {
   console.log(`model: ${failures.length} of ${pass + failures.length} checks FAILED\n`);
   for (const f2 of failures) console.log(`  ✗ ${f2}`);
   process.exit(1);
 }
-console.log(`power-flow.js + utils.js: all ${pass} checks passed`);
+console.log(`power-flow.js + utils.js + the inverter's alarm: all ${pass} checks passed`);
