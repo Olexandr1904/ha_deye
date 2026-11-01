@@ -125,6 +125,12 @@ export class DashboardRenderer {
     }
   }
 
+  /** The title from the settings, now and for the next mount (a language change). */
+  setTitle(title) {
+    this.opts.title = title;
+    if (this.r.titleMain) setText(this.r.titleMain, title || 'DEYE ENERGY');
+  }
+
   /** auto | on | off — see the reduce-motion handling in dashboard.css. */
   setAnimations(mode) {
     const value = ['auto', 'on', 'off'].includes(mode) ? mode : 'auto';
@@ -156,13 +162,14 @@ export class DashboardRenderer {
     });
     r.settingsBtn = h('button', { class: 'icon-btn settings-btn', type: 'button', title: t('ui.settings'), 'aria-label': t('ui.settings'), html: icon('gear', { size: 19 }), onclick: () => this.opts.onOpenSettings && this.opts.onOpenSettings() });
     r.demoBadge = h('span', { class: 'badge badge-demo', text: t('badge.demo'), hidden: true });
+    r.titleMain = h('span', { class: 'brand-title-main', text: this.opts.title || 'DEYE ENERGY' });
 
     return h('header', { class: 'topbar' },
       r.menuBtn,
       h('div', { class: 'brand' },
         h('span', { class: 'brand-mark', html: icon('bolt', { size: 20 }) }),
         h('div', { class: 'brand-text' },
-          h('div', { class: 'brand-title' }, h('span', { class: 'brand-title-main', text: this.opts.title || 'DEYE ENERGY' }), r.demoBadge))),
+          h('div', { class: 'brand-title' }, r.titleMain, r.demoBadge))),
       h('div', { class: 'topbar-nav' }, r.dateNav.element),
       h('div', { class: 'topbar-spacer' }),
       h('div', { class: 'last-update' },
@@ -1035,7 +1042,8 @@ function socBand(soc) {
 
 /** Direction glyph next to a flow label. */
 function arrowFor(linkKey, dir, layout) {
-  const narrow = layout === 'narrow';
+  // Both phone layouts: with the generator the bottom row is the same.
+  const narrow = layout === 'narrow' || layout === 'narrowGen';
   const vertical = linkKey === 'solar' || linkKey === 'battery' || (narrow && linkKey === 'load');
   if (linkKey === 'solar') return dir === 'toHub' ? '↓' : '↑';
   if (linkKey === 'battery') return narrow ? (dir === 'toHub' ? '↗' : '↙') : (dir === 'toHub' ? '↑' : '↓');

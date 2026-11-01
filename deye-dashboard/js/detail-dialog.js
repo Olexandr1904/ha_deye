@@ -207,10 +207,14 @@ export class DetailDialog {
   _label() { return t(`role.${this.role.key}`, null, this.role.label); }
 
   /**
-   * The axis unit has to be the unit the values will actually be printed in:
-   * power and energy auto-scale, so a sub-kilowatt series must say W, not kW.
+   * The axis unit has to be the unit its numbers are printed in. The ticks are
+   * the values as they are — kW and kWh — so the unit is not the one the
+   * formatter would pick for the largest value (W under a kilowatt, MWh from a
+   * thousand kWh), which mislabelled 800 W as 0.8 W.
    */
   _unit(values = []) {
+    if (this.role.kind === 'power') return t('unit.kW');
+    if (this.role.kind === 'energy') return t('unit.kWh');
     const ref = values.length ? Math.max(...values.map((v) => Math.abs(v))) : 1;
     return formatByKind(this.role.kind, ref || 1).unit;
   }

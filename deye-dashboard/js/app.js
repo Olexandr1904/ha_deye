@@ -17,7 +17,7 @@ import { DetailDialog } from './detail-dialog.js';
 import { TimeSeriesChart, DailyBarChart } from './charts.js';
 import { fetchPowerSeries, fetchEnergyBars, clearHistoryCache, explainEmpty } from './history.js';
 import { autoDetect } from './discovery.js';
-import { defaultView, periodBounds, usesLiveCounters, startOfDay } from './ranges.js';
+import { defaultView, periodBounds, usesLiveCounters, startOfDay, toPresent } from './ranges.js';
 import { setDebug, log, warn, h, isNum, clamp, formatEnergy, formatPower, rafThrottle, preferMovedCounter } from './utils.js';
 import { t, setLanguage, resolveLanguage, getLanguage, LANGUAGES } from './i18n.js';
 
@@ -66,7 +66,7 @@ export class DeyeDashboard {
       showPhases: this.config.showPhases,
       onOpenSettings: () => this.settings.open('entities'),
       onViewChange: (v) => this.setView(v),
-      onNow: () => this.setView({ ...this.view, anchor: startOfDay(new Date()) }),
+      onNow: () => this.setView(toPresent(this.view)),
       onOpenDetail: (role) => this.detail.open(role),
       onToggleMenu: () => this.opts.onToggleMenu && this.opts.onToggleMenu(),
       onToggleLanguage: () => this.cycleLanguage(),
@@ -319,6 +319,7 @@ export class DeyeDashboard {
     this.entityManager.setConfig(this.config);
     this.model.setConfig(this.config);
     this.renderer.opts.showPhases = this.config.showPhases;
+    this.renderer.setTitle(this.config.title);
     clearHistoryCache();
     this._lastChartFetch = 0;
     this.renderer.setAnimations(this.config.animations);
@@ -343,10 +344,13 @@ export class DeyeDashboard {
   applyLanguage(code, { persist = false, reopenSettings = null } = {}) {
     const resolved = resolveLanguage(code, this._hassLanguage);
     this.config.language = code;
-    if (persist) saveUserConfig(this.config);
+    // The language only. The whole configuration in memory also holds what
+    // came from YAML and an auto-detected mapping nobody confirmed; stored, it
+    // would override configuration.yaml in this browser from then on.
+    if (persist) saveUserConfig({ ...(loadUserConfig() || {}), language: code });
     if (!setLanguage(resolved) && !reopenSettings) return;
     this._remount();
-    if (reopenSettings) this.settings.open(reopenSettings);
+    if (reopenSettings) this.settings.open(reopenSettings, { keepDraft: true });
     log('language:', resolved);
   }
 

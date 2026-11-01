@@ -1408,6 +1408,149 @@ try {
   await page.send('Emulation.setEmulatedMedia', { features: [] });
   await setAnim('auto');
 
+  /* ─────────────── 15a. found in review ─────────────── */
+  group('Month grid, phone arrows, hidden labels, dialog units, settings, Today');
+  const storedBeforeReview = await page.eval(`return localStorage.getItem('deye-dashboard:user-config:v1');`);
+  // A real mouse click. element.click() from a script reaches a document
+  // listener with the same retargeting, but a pointer is what the bug was
+  // reported with, so that is what is used here.
+  const mouseClick = async (expr) => {
+    const p = await page.eval(`${HELPERS} const e = ${expr}; const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 };`);
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await page.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', clickCount: 1 });
+    }
+    await sleep(250);
+  };
+  const ready = async (url) => {
+    await page.goto(url);
+    await poll(page, `!!host.app && host.app._readyDone`, 8000);
+    await sleep(800);
+  };
+
+  await page.setViewport({ width: 1600, height: 1000 });
+  await ready(`${BASE}?demo=1&hour=13.5&deye_range=month`);
+  // `.flow-label` sets display: flex, which beat the hidden attribute: the
+  // generator's label sat as an empty pill in the corner of every diagram
+  // without a generator.
+  const ghost = await page.eval(`${HELPERS} const l = q('.flow-label.fl-generator');
+    return { layout: q('.flow-stage').dataset.layout, hidden: l.hidden, display: getComputedStyle(l).display };`);
+  check('a link label the layout has no place for is not drawn', ghost.layout === 'wide' && ghost.hidden && ghost.display === 'none',
+    JSON.stringify(ghost));
+
+  // The year arrows sit inside the month grid. The grid's close-on-outside
+  // listener is on the document, where a click inside the shadow root comes
+  // from the host: the arrows closed the grid and moved the period a year
+  // without showing it.
+  const thisYear = new Date().getFullYear();
+  await mouseClick(`q('.topbar .nav-label')`);
+  const labelBefore = await page.eval(`${HELPERS} return txt('.topbar .nav-label-text');`);
+  await mouseClick(`q('.topbar .pop-head .nav-btn')`);
+  const stepped = await page.eval(`${HELPERS} return { open: !q('.topbar .nav-pop').hidden, head: txt('.topbar .pop-title'), label: txt('.topbar .nav-label-text') };`);
+  check('the year arrow in the month grid steps the year and keeps the grid open',
+    stepped.open && stepped.head === String(thisYear - 1) && stepped.label === labelBefore, JSON.stringify(stepped));
+  await mouseClick(`qa('.topbar .pop-cell')[2]`);
+  await poll(page, `q('.topbar .nav-pop').hidden`, 3000);
+  const picked = await page.eval(`${HELPERS} return txt('.topbar .nav-label-text');`);
+  check('a month picked after stepping is in that year', /mar/i.test(picked) && picked.includes(String(thisYear - 1)), picked);
+  await mouseClick(`q('.topbar .nav-label')`);
+  await mouseClick(`q('.topbar .pop-head .nav-btn')`);
+  await mouseClick(`q('.brand-title-main')`);
+  const browsed = await page.eval(`${HELPERS} return { closed: q('.topbar .nav-pop').hidden, label: txt('.topbar .nav-label-text') };`);
+  check('browsing years and closing the grid changes nothing', browsed.closed && browsed.label === picked, JSON.stringify(browsed));
+  await mouseClick(`q('.topbar .nav-period > .nav-btn')`);
+  await sleep(300);
+  const stepBack = await page.eval(`${HELPERS} return txt('.topbar .nav-label-text');`);
+  check('and ‹ steps from the period on screen', /feb/i.test(stepBack) && stepBack.includes(String(thisYear - 1)), stepBack);
+
+  // Today on a past custom range: the interval's ends are its own, so moving
+  // its anchor moved nothing and the button did nothing.
+  await page.eval(`${HELPERS}
+    const d = (n) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - n); return x; };
+    app.setView({ range: 'custom', customFrom: d(30), customTo: d(26), anchor: d(26) }); return 1;`);
+  await poll(page, `app.mode === 'history' && !q('.history-bar').hidden`, 4000);
+  await mouseClick(`q('.history-now')`);
+  const customBack = await poll(page, `app.mode === 'live'`, 4000);
+  const customView = await page.eval(`${HELPERS} return { mode: app.mode, range: app.view.range };`);
+  check('Today on a past custom range comes back to the present', customBack === true, JSON.stringify(customView));
+
+  // Power and energy axes print kW and kWh numbers; a unit picked by the
+  // formatter (W under a kilowatt, MWh from a thousand kWh) did not match them.
+  await page.eval(`${HELPERS} app.detail.open('pvTotal'); return 1;`);
+  await poll(page, dialogSettled, 9000);
+  const dlgUnit = await page.eval(`${HELPERS} return {
+    unit: txt('.detail-modal .axis-unit'),
+    ticks: qa('.detail-modal .chart-grid .axis-label:not(.axis-unit)').map(e => e.textContent.trim()) };`);
+  check("the dialog's axis unit is the unit of its numbers", dlgUnit.unit === 'kWh', `${dlgUnit.unit} over ${dlgUnit.ticks.join(', ')}`);
+  await closeDialog();
+  await sleep(300);
+
+  // A language chosen in the settings rebuilds the page and reopens the dialog;
+  // reopening used to start the draft afresh, losing what had been typed.
+  const draftKept = await page.eval(`${HELPERS}
+    app.settings.open('entities');
+    await new Promise(r => setTimeout(r, 300));
+    const f = app.settings.fields.inverterTemperature.input;
+    f.value = 'sensor.typed_not_saved'; f.dispatchEvent(new Event('input', { bubbles: true }));
+    q('.modal .tab-btn[data-tab="options"]').click();
+    await new Promise(r => setTimeout(r, 200));
+    const before = app.config.language;
+    const pick = (code) => { const s = qa('.modal select').find(x => [...x.options].some(o => o.value === 'uk'));
+      s.value = code; s.dispatchEvent(new Event('change', { bubbles: true })); };
+    pick('uk');
+    await new Promise(r => setTimeout(r, 700));
+    const kept = app.settings.draft && app.settings.draft.entities.inverterTemperature;
+    const open = app.settings.isOpen;
+    pick(before);
+    await new Promise(r => setTimeout(r, 700));
+    app.settings.close();
+    return { kept, open };`);
+  check('a language changed in the settings keeps what was typed', draftKept.open && draftKept.kept === 'sensor.typed_not_saved',
+    JSON.stringify(draftKept));
+
+  // The title is an option like any other: it applies on Save.
+  const titled = await page.eval(`${HELPERS}
+    app.settings.open('options');
+    await new Promise(r => setTimeout(r, 300));
+    const field = qa('.modal .field').find(f => /title/i.test((f.querySelector('.field-label') || {}).textContent || ''));
+    const input = field.querySelector('input');
+    input.value = 'Home solar'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    q('.modal .modal-foot .btn-primary').click();
+    await new Promise(r => setTimeout(r, 600));
+    return txt('.brand-title-main');`);
+  check('a new dashboard title shows on Save', titled === 'Home solar', titled);
+
+  // The language button saves the language. Saving the whole configuration
+  // with it stored an auto-detected mapping the user never confirmed, and from
+  // then on that copy overrode configuration.yaml in this browser.
+  await page.eval(`localStorage.removeItem('deye-dashboard:user-config:v1'); return 1;`);
+  await ready(`${BASE}?demo=1&hour=13.5`);
+  await page.eval(`${HELPERS} q('.lang-btn').click(); return 1;`);
+  await poll(page, `q('.lang-btn').textContent.trim() === 'UA'`, 5000);
+  const savedLang = await page.eval(`return JSON.parse(localStorage.getItem('deye-dashboard:user-config:v1') || 'null');`);
+  check('the language button saves the language and nothing else',
+    !!savedLang && savedLang.language === 'uk' && !savedLang.entities, JSON.stringify(savedLang).slice(0, 140));
+
+  // On a phone with the generator running, the arrows have to follow the
+  // narrow geometry: the generator above, battery and grid below on the diagonals.
+  await page.eval(`const before = ${JSON.stringify(storedBeforeReview)};
+    if (before === null) localStorage.removeItem('deye-dashboard:user-config:v1');
+    else localStorage.setItem('deye-dashboard:user-config:v1', before);
+    return 1;`);
+  await ready(`${BASE}?demo=1&hour=20`);
+  await page.setViewport({ width: 390, height: 844, dpr: 3, mobile: true });
+  await poll(page, `q('.flow-stage').dataset.layout === 'narrowGen'`, 6000);
+  await sleep(600);
+  const arrows = await page.eval(`${HELPERS}
+    const want = { solar: { toHub: '↓', fromHub: '↑' }, generator: { toHub: '↙', fromHub: '↗' },
+      battery: { toHub: '↗', fromHub: '↙' }, grid: { toHub: '↖', fromHub: '↘' }, load: { toHub: '↑', fromHub: '↓' } };
+    return Object.entries(app.flow.links).filter(([, l]) => l.dir !== 'idle')
+      .map(([k, l]) => ({ k, got: q('.fl-' + k + ' .fl-arrow').textContent, want: want[k][l.dir] }));`);
+  check('on a phone with the generator every arrow points along its link',
+    arrows.length >= 3 && arrows.every((x) => x.got === x.want),
+    arrows.map((x) => `${x.k} ${x.got}${x.got === x.want ? '' : ` (want ${x.want})`}`).join(', '));
+  await page.setViewport({ width: 1600, height: 1000 });
+  await ready(`${BASE}?demo=1&hour=13.5`);
+
   /* ─────────────── 16. accessibility ─────────────── */
   group('Accessibility');
   const a11y = await page.eval(`${HELPERS} return {
