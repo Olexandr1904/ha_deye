@@ -18,8 +18,10 @@
  */
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(new URL(import.meta.url).pathname), '..');
+// fileURLToPath, not URL.pathname: the pathname keeps a space as %20.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'deye-dashboard');
 const OUT = join(ROOT, 'dist');
 const ENTRY_OUT = 'ha_deye.js';          // must match the repository name for HACS

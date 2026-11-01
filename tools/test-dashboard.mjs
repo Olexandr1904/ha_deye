@@ -1289,7 +1289,13 @@ try {
   check('dialog shows min/avg/max and a link to Home Assistant',
     rowDlg.stats.length === 3 && /history\?entity_id=/.test(rowDlg.link || ''), rowDlg.stats.join(' | '));
 
-  const band = await dialogRange('month');
+  await dialogRange('month');
+  // The month before, which is always complete: on the 1st the current month
+  // has a single day, and one bucket draws no band.
+  await page.eval(`${HELPERS} q('.detail-modal .nav-period > .nav-btn').click(); return 1;`);
+  await sleep(150);
+  await poll(page, dialogSettled, 9000);
+  const band = await readDialog();
   check('over a month an instantaneous sensor gets a mean line with a min-max band',
     band.bands === 1 && band.lines === 1, `bands ${band.bands}, lines ${band.lines}, ${band.stats.join(' | ')}`);
   await page.screenshot(`${SHOT}-dialog.png`);
@@ -1394,6 +1400,9 @@ try {
   await setAnim('off');
   let a = await animState();
   check('off disables the animation', a.attr === 'off' && parseFloat(a.dur) < 0.01, `${a.attr}, ${a.dur}`);
+  // Said explicitly: headless Chrome takes the host's setting, and a Mac with
+  // Reduce motion on would otherwise make this the reduce-motion case below.
+  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
   await setAnim('auto');
   a = await animState();
   check('auto animates when the system does not object', a.attr === 'auto' && parseFloat(a.dur) > 0.4, `${a.attr}, ${a.dur}`);
